@@ -126,21 +126,6 @@ function parseJSON(text) {
 
 const downloadBrief = () => window.print();
 
-function emailBrief(brief, payload, freelancer) {
-  if (!payload.email) return;
-  fetch("/api/send-brief", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      to: payload.email,
-      name: payload.name,
-      projectName: payload.projectName,
-      freelancer,
-      brief: brief.professionalBrief,
-    }),
-  }).catch(() => {});
-}
-
 /* ------------------------------------------------------------------ */
 /* Atoms                                                               */
 /* ------------------------------------------------------------------ */
@@ -377,7 +362,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
         content: `You are structuring a client intake into a professional creative brief for a freelancer.\n\nClient answers (JSON):\n${JSON.stringify(payload, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"professionalBrief": "a well-written multi-paragraph creative brief in professional plain English",\n"missingInfo": ["specific information the client did not provide"],\n"followUpQuestions": ["sharp questions the freelancer should ask before quoting"],\n"unclearRequirements": ["requirements that are ambiguous, quoting the vague phrase"],\n"scopeGaps": ["work implied by the answers but not explicitly scoped"]}`
       }]);
       const j = parseJSON(text);
-      if (j && j.professionalBrief) { setResult(j); setSubmitState("done"); onDone && onDone(j, payload); emailBrief(j, payload, freelancer); return; }
+      if (j && j.professionalBrief) { setResult(j); setSubmitState("done"); onDone && onDone(j, payload); return; }
       throw new Error("bad json");
     } catch {
       const fallback = {
@@ -386,7 +371,6 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
         _fallback: true,
       };
       setResult(fallback); setSubmitState("done"); onDone && onDone(fallback, payload);
-      emailBrief(fallback, payload, freelancer);
     }
   }
 
