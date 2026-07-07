@@ -1,0 +1,1741 @@
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import {
+  ArrowRight, ArrowLeft, Link2, Copy, Check, Sparkles, LayoutDashboard,
+  FolderKanban, Users, FileText, Receipt, CreditCard, Settings, Sun, Moon,
+  Plus, Globe, Upload, ChevronRight, Clock, CircleDollarSign, X, Loader2,
+  CheckCircle2, AlertTriangle, HelpCircle, Search, MoreHorizontal, Send,
+  FileStack, Wallet, Activity, Paperclip, ExternalLink, PenLine, Mic, Square,
+  Undo2, Download, Image, Trash2, Eye
+} from "lucide-react";
+
+/* ------------------------------------------------------------------ */
+/* Theme                                                               */
+/* ------------------------------------------------------------------ */
+
+const ThemeStyles = () => (
+  <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    [data-app="prelima"] {
+      --bg: #F6F6F3;
+      --surface: #FFFFFF;
+      --surface-2: #FBFBF9;
+      --ink: #17171C;
+      --muted: #6E6E78;
+      --line: #E8E8E2;
+      --accent: #4353FF;
+      --accent-ink: #FFFFFF;
+      --accent-soft: #EEF0FF;
+      --good: #0E9F6E;
+      --warn: #C27803;
+      --shadow: 0 1px 2px rgba(20,20,30,.04), 0 8px 24px rgba(20,20,30,.06);
+      --shadow-lg: 0 2px 4px rgba(20,20,30,.05), 0 24px 64px rgba(20,20,30,.12);
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--ink);
+    }
+    [data-app="prelima"][data-theme="dark"] {
+      --bg: #0F0F13;
+      --surface: #17171D;
+      --surface-2: #1C1C23;
+      --ink: #F1F1EE;
+      --muted: #8F8F9A;
+      --line: #272730;
+      --accent: #7180FF;
+      --accent-ink: #0F0F13;
+      --accent-soft: #1D2038;
+      --good: #31C48D;
+      --warn: #E3A008;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+      --shadow-lg: 0 2px 4px rgba(0,0,0,.5), 0 24px 64px rgba(0,0,0,.5);
+    }
+    [data-app="prelima"] .display { font-family: 'Bricolage Grotesque', 'Inter', sans-serif; }
+    [data-app="prelima"] .mono { font-family: 'JetBrains Mono', monospace; }
+    [data-app="prelima"] * { box-sizing: border-box; }
+    [data-app="prelima"] ::selection { background: var(--accent); color: var(--accent-ink); }
+    [data-app="prelima"] button:focus-visible, [data-app="prelima"] a:focus-visible,
+    [data-app="prelima"] input:focus-visible, [data-app="prelima"] textarea:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    @keyframes pr-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pr-fade { from { opacity: 0; } to { opacity: 1; } }
+    [data-app="prelima"] .rise { animation: pr-rise .45s cubic-bezier(.2,.7,.2,1) both; }
+    [data-app="prelima"] .fade { animation: pr-fade .3s ease both; }
+    @media (prefers-reduced-motion: reduce) {
+      [data-app="prelima"] .rise, [data-app="prelima"] .fade { animation: none; }
+    }
+    [data-app="prelima"] input[type="range"] {
+      -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
+      border-radius: 999px; background: var(--line); cursor: pointer;
+    }
+    [data-app="prelima"] input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; width: 26px; height: 26px; border-radius: 999px;
+      background: var(--accent); border: 4px solid var(--surface); box-shadow: var(--shadow);
+    }
+    [data-app="prelima"] textarea, [data-app="prelima"] input[type="text"],
+    [data-app="prelima"] input[type="email"], [data-app="prelima"] input[type="url"] {
+      background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+    }
+    [data-app="prelima"] ::placeholder { color: var(--muted); opacity: .7; }
+    @media print {
+      body * { visibility: hidden !important; }
+      .pr-print-area, .pr-print-area * { visibility: visible !important; }
+      .pr-print-area { position: absolute !important; left: 0; top: 0; width: 100%; margin: 0; padding: 24px; box-shadow: none !important; border: none !important; }
+    }
+  `}</style>
+);
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+const money = (n) => "RM" + Number(n).toLocaleString();
+const cx = (...a) => a.filter(Boolean).join(" ");
+
+/* Project value: quotation total when one exists (scoped, accurate),
+   otherwise the client's stated budget from the brief (estimate).
+   Pipeline value: sum of project values across projects that are not
+   yet paid — once an invoice is paid it becomes revenue, not pipeline. */
+const quoteSubtotal = (q) => q ? q.items.reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.unit) || 0), 0) : 0;
+const quoteTotal = (q) => q ? Math.round(quoteSubtotal(q) * (1 + (q.sst || 0) / 100)) : 0;
+const quoteFor = (p, quotes) => quotes.find(q => q.projectId === p.id) || null;
+const projectValue = (p, quotes) => { const q = quoteFor(p, quotes); return q ? quoteTotal(q) : (p.budget || 0); };
+const isPaid = (p) => p.invoice && p.invoice.status === "Paid";
+
+async function callClaude(messages, { useSearch = false } = {}) {
+  const res = await fetch("/api/claude", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages, useSearch }),
+  });
+  const data = await res.json();
+  return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+}
+
+function parseJSON(text) {
+  try {
+    const clean = text.replace(/```json|```/g, "").trim();
+    const start = clean.indexOf("{");
+    const end = clean.lastIndexOf("}");
+    return JSON.parse(clean.slice(start, end + 1));
+  } catch { return null; }
+}
+
+const downloadBrief = () => window.print();
+
+/* ------------------------------------------------------------------ */
+/* Seed data                                                           */
+/* ------------------------------------------------------------------ */
+
+const seedProjects = [
+  {
+    id: "p1", name: "Brand refresh — Havana Coffee Co.", client: "Havana Coffee Co.",
+    status: "Brief received", created: "28 Jun 2026", budget: 8500, timelineWeeks: 6,
+    link: "prelima.app/b/hvn-4c2f", briefComplete: true,
+    brief: {
+      professionalBrief:
+`Havana Coffee Co. is a specialty roaster with three cafés in Kuala Lumpur, positioned around direct-trade sourcing and a warm, neighbourhood feel. The current identity dates from their 2019 launch and no longer reflects the maturity of the brand or its packaging range.
+
+The project covers a full brand refresh: revised logotype, colour and typography system, packaging templates for three bean lines, and a compact brand guideline document. The primary objective is to support a retail push into grocery and online channels without alienating café regulars.
+
+The audience is urban professionals aged 25–40 who buy whole beans for home brewing and value provenance. Tone should feel crafted and confident, not artisanal-cliché.
+
+Deliverables: logotype refinement, brand guidelines (PDF), packaging system (3 SKUs), social launch kit. Timeline: 6 weeks from kickoff. Budget: RM8,500 fixed, with a preference for two structured revision rounds.`,
+      missingInfo: ["Print vendor specs for packaging dielines", "Existing brand asset files (source formats)"],
+      followUpQuestions: ["Should the café signage be updated within this scope, or is it a later phase?", "Is there a hard launch date tied to the grocery listing?"],
+      unclearRequirements: ["\"Keep the vibe but modernise\" — needs concrete references of what to preserve"],
+      scopeGaps: ["Photography/art direction is implied by the packaging ask but not scoped or budgeted"],
+    },
+    activity: [
+      { t: "2 Jul", e: "AI brief generated and structured" },
+      { t: "2 Jul", e: "Client completed intake (14 of 14 steps)" },
+      { t: "28 Jun", e: "Intake link sent to marissa@havanacoffee.co" },
+      { t: "28 Jun", e: "Project created" },
+    ],
+    files: [
+      { name: "current-logo.ai", size: "2.1 MB" },
+      { name: "packaging-photos.zip", size: "18.4 MB" },
+      { name: "moodboard-refs.pdf", size: "5.7 MB" },
+    ],
+    invoice: { number: "INV-2026-009", amount: 4250, due: "15 Jul 2026", status: "Awaiting payment", note: "50% deposit" },
+  },
+  {
+    id: "p2", name: "Website copy — Northwind Legal", client: "Northwind Legal LLP",
+    status: "Awaiting brief", created: "3 Jul 2026", budget: null, timelineWeeks: null,
+    link: "prelima.app/b/nwl-9a1d", briefComplete: false,
+    brief: null,
+    activity: [
+      { t: "4 Jul", e: "Client opened intake link (step 3 of 14, autosaved)" },
+      { t: "3 Jul", e: "Intake link sent to d.tan@northwindlegal.com" },
+      { t: "3 Jul", e: "Project created" },
+    ],
+    files: [], quote: null, invoice: null,
+  },
+  {
+    id: "p3", name: "Launch campaign — Solace Yoga", client: "Solace Yoga Studio",
+    status: "Quoted", created: "18 Jun 2026", budget: 4200, timelineWeeks: 4,
+    link: "prelima.app/b/sly-7e3b", briefComplete: true,
+    brief: {
+      professionalBrief:
+`Solace Yoga is opening a second studio in Bangsar and needs a four-week social launch campaign across Instagram and TikTok, driving trial-class bookings ahead of the 1 August opening.
+
+Deliverables: campaign concept, 12 feed posts, 8 short-form videos (edited from supplied footage), and a founder-story carousel. Audience: women 24–38 within 5km, currently practising at gyms rather than dedicated studios. Budget: RM4,200. The client has confirmed all footage will be supplied by 10 July.`,
+      missingInfo: ["Booking platform link for CTA tracking"],
+      followUpQuestions: ["Is paid amplification handled in-house or excluded entirely?"],
+      unclearRequirements: [],
+      scopeGaps: ["Community management during launch week is not scoped"],
+    },
+    activity: [
+      { t: "26 Jun", e: "Quotation Q-2026-013 sent" },
+      { t: "24 Jun", e: "AI brief generated and structured" },
+      { t: "18 Jun", e: "Project created" },
+    ],
+    files: [{ name: "studio-footage-selects.mp4", size: "412 MB" }],
+    invoice: null,
+  },
+];
+
+const seedQuotes = [
+  {
+    id: "q1", number: "Q-2026-014", projectId: "p1", client: "Havana Coffee Co.",
+    title: "Brand refresh — Havana Coffee Co.", mode: "itemised",
+    consolidatedLabel: "Complete brand refresh package", status: "Sent", created: "2 Jul 2026",
+    sst: 6, logo: null, paymentMethod: "Bank transfer", paymentTerms: "50% deposit to start, balance on delivery.",
+    bank: { name: "Maybank", account: "5123 4567 8901", holder: "BETA Studio" },
+    items: [
+      { title: "Brand strategy & logotype", details: "Discovery workshop\nLogotype refinement\n2 revision rounds", qty: 1, unit: 3200 },
+      { title: "Packaging design", details: "Front & back artwork per SKU\nPrint-ready dielines", qty: 3, unit: 1100 },
+      { title: "Brand guidelines document", details: "Compact PDF guide\nUsage rules & type system", qty: 1, unit: 1200 },
+      { title: "Social launch kit", details: "9x feed posts\n6x stories", qty: 1, unit: 700 },
+    ],
+  },
+  {
+    id: "q2", number: "Q-2026-013", projectId: "p3", client: "Solace Yoga Studio",
+    title: "Launch campaign — Solace Yoga", mode: "itemised",
+    consolidatedLabel: "Studio launch campaign — all deliverables", status: "Accepted", created: "26 Jun 2026",
+    sst: 0, logo: null, paymentMethod: "DuitNow", paymentTerms: "Full payment on acceptance of this quotation.",
+    bank: { name: "CIMB", account: "8001 2345 6789", holder: "BETA Studio" },
+    items: [
+      { title: "Campaign concept & content plan", details: "Concept deck\n4-week content calendar", qty: 1, unit: 900 },
+      { title: "Social media content", details: "Feed posts (design + copy)", qty: 12, unit: 125 },
+      { title: "Short-form video edits", details: "Edited from supplied footage\nUp to 30s each", qty: 8, unit: 200 },
+      { title: "Founder story carousel", details: "Up to 8 frames", qty: 1, unit: 200 },
+    ],
+  },
+];
+
+/* ------------------------------------------------------------------ */
+/* Atoms                                                               */
+/* ------------------------------------------------------------------ */
+
+const Btn = ({ children, variant = "primary", className, ...p }) => (
+  <button
+    {...p}
+    className={cx("inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-medium transition-all duration-150 active:scale-[.98] disabled:opacity-50 disabled:pointer-events-none", className)}
+    style={
+      variant === "primary" ? { background: "var(--accent)", color: "var(--accent-ink)" }
+      : variant === "ghost" ? { background: "transparent", color: "var(--ink)" }
+      : { background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }
+    }
+  >{children}</button>
+);
+
+const Card = ({ children, className, style, ...p }) => (
+  <div {...p} className={cx("rounded-2xl", className)}
+    style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)", ...style }}>
+    {children}
+  </div>
+);
+
+const Tag = ({ children, tone = "muted" }) => (
+  <span className="mono inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium tracking-wide"
+    style={tone === "accent" ? { background: "var(--accent-soft)", color: "var(--accent)" }
+      : tone === "good" ? { background: "color-mix(in srgb, var(--good) 12%, transparent)", color: "var(--good)" }
+      : tone === "warn" ? { background: "color-mix(in srgb, var(--warn) 14%, transparent)", color: "var(--warn)" }
+      : { background: "var(--surface-2)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+    {children}
+  </span>
+);
+
+const SectionLabel = ({ children }) => (
+  <div className="mono text-[11px] font-medium uppercase tracking-[0.14em] mb-2" style={{ color: "var(--muted)" }}>{children}</div>
+);
+
+/* ------------------------------------------------------------------ */
+/* Client intake flow — the signature experience                       */
+/* ------------------------------------------------------------------ */
+
+const OBJECTIVES = ["Brand awareness", "Lead generation", "Sales / conversions", "Product launch", "Rebrand", "Community growth", "Recruitment"];
+const DELIVERABLE_OPTIONS = ["Logo & identity", "Website", "Social content", "Video", "Campaign", "Copywriting", "Packaging", "Others"];
+const PLATFORMS = ["Instagram", "TikTok", "LinkedIn", "YouTube", "Facebook", "Website", "Email", "Offline / print"];
+
+const blankAnswers = {
+  website: "", overview: "", background: "", objectives: [], audience: "",
+  deliverables: [], platforms: [], timelineWeeks: 6, budget: 5000, budgetFlexible: true,
+  revisions: 2, references: "", referencesAvoid: "", refShots: [], deliverablesOther: "", name: "", email: "",
+};
+
+const Chip = ({ active, children, onClick }) => (
+  <button onClick={onClick}
+    className="rounded-full px-4 py-2.5 text-sm font-medium transition-all duration-150 active:scale-[.97]"
+    style={active
+      ? { background: "var(--accent)", color: "var(--accent-ink)", border: "1px solid var(--accent)" }
+      : { background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--line)" }}>
+    {children}
+  </button>
+);
+
+const Q = ({ idx, total, title, hint, children }) => (
+  <div className="rise" key={idx}>
+    <div className="mono text-xs mb-3" style={{ color: "var(--accent)" }}>{String(idx + 1).padStart(2, "0")} / {total}</div>
+    <h2 className="display text-2xl md:text-4xl font-semibold leading-tight mb-2">{title}</h2>
+    {hint && <p className="text-sm md:text-base mb-6" style={{ color: "var(--muted)" }}>{hint}</p>}
+    {!hint && <div className="mb-6" />}
+    {children}
+  </div>
+);
+
+const TA = ({ value, onChange, placeholder, rows = 5, autoFocus = true }) => (
+  <textarea rows={rows} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+    className="w-full rounded-2xl p-4 md:p-5 text-base leading-relaxed resize-none"
+    style={{ boxShadow: "var(--shadow)" }} autoFocus={autoFocus} />
+);
+
+const Slider = ({ value, min, max, step: st = 1, onChange, format }) => (
+  <div>
+    <div className="display text-4xl md:text-5xl font-semibold mb-6" style={{ color: "var(--accent)" }}>{format(value)}</div>
+    <input type="range" min={min} max={max} step={st} value={value} onChange={e => onChange(Number(e.target.value))} />
+    <div className="flex justify-between mt-2 mono text-xs" style={{ color: "var(--muted)" }}>
+      <span>{format(min)}</span><span>{format(max)}</span>
+    </div>
+  </div>
+);
+
+const VoiceTA = ({ value, onChange, placeholder, rows = 5, cleanHint }) => {
+  const [rec, setRec] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [prev, setPrev] = useState(null);
+  const [note, setNote] = useState("");
+  const valRef = useRef(value);
+  valRef.current = value;
+  const recRef = useRef(null);
+  const supported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  const tidy = async (text) => {
+    if (!text || !text.trim()) return;
+    setBusy(true); setNote("");
+    try {
+      const out = await callClaude([{
+        role: "user",
+        content: `Clean up this client's ${cleanHint} into clear, natural sentences. Fix rambling, filler words and speech-to-text errors. Keep their meaning and every detail; do not add anything new. Respond ONLY with the cleaned text, nothing else.\n\n---\n${text}`
+      }]);
+      const cleaned = (out || "").trim();
+      if (cleaned) { setPrev(text); onChange(cleaned); setNote("tidied"); } else setNote("failed");
+    } catch { setNote("failed"); }
+    setBusy(false);
+  };
+
+  const toggleRec = () => {
+    if (rec) { try { recRef.current && recRef.current.stop(); } catch {} return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const r = new SR();
+    r.lang = "en-US"; r.continuous = true; r.interimResults = false;
+    r.onresult = (e) => {
+      let t = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript;
+      const nv = (valRef.current ? valRef.current.trim() + " " : "") + t.trim();
+      onChange(nv);
+    };
+    r.onend = () => { setRec(false); if (valRef.current && valRef.current.trim()) tidy(valRef.current); };
+    r.onerror = () => { setRec(false); setNote("mic-error"); };
+    recRef.current = r;
+    try { r.start(); setRec(true); setNote(""); } catch { setNote("mic-error"); }
+  };
+
+  return (
+    <div>
+      <textarea rows={rows} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className="w-full rounded-2xl p-4 md:p-5 text-base leading-relaxed resize-none"
+        style={{ boxShadow: "var(--shadow)" }} autoFocus />
+      <div className="mt-3 flex flex-wrap items-center gap-2.5">
+        {supported ? (
+          <button onClick={toggleRec}
+            className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all active:scale-[.98]"
+            style={rec
+              ? { background: "#E02424", color: "#fff" }
+              : { background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)", color: "var(--ink)" }}>
+            {rec ? <Square className="w-3.5 h-3.5" /> : <Mic className="w-4 h-4" />}
+            {rec ? "Stop — I'm listening" : "Speak instead"}
+          </button>
+        ) : (
+          <span className="mono text-[11px]" style={{ color: "var(--muted)" }}>Voice input needs Chrome or Safari</span>
+        )}
+        <button onClick={() => tidy(value)} disabled={busy || !value.trim()}
+          className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all active:scale-[.98] disabled:opacity-40"
+          style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+          {busy ? "Tidying…" : "Tidy with AI"}
+        </button>
+        {note === "tidied" && prev !== null && (
+          <button onClick={() => { onChange(prev); setPrev(null); setNote(""); }}
+            className="inline-flex items-center gap-1.5 text-sm underline underline-offset-4" style={{ color: "var(--muted)" }}>
+            <Undo2 className="w-3.5 h-3.5" /> Undo
+          </button>
+        )}
+        {note === "failed" && <span className="text-sm" style={{ color: "var(--warn)" }}>AI tidy unavailable — your text is untouched.</span>}
+        {note === "mic-error" && <span className="text-sm" style={{ color: "var(--warn)" }}>Couldn't access the microphone.</span>}
+      </div>
+    </div>
+  );
+};
+
+function IntakeFlow({ projectName = "Brand refresh", freelancer = "BETA Studio", onDone, onExit }) {
+  const [step, setStep] = useState(-1);
+  const [a, setA] = useState(blankAnswers);
+  const [saved, setSaved] = useState(true);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState("");
+  const [showBg, setShowBg] = useState(false);
+  const [submitState, setSubmitState] = useState(null); // null | 'working' | 'done' | 'error'
+  const [result, setResult] = useState(null);
+
+  const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
+  useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
+
+  const steps = useMemo(() => ([
+    { id: "website", label: "Website & background" },
+    { id: "overview", label: "Project overview" },
+    { id: "objectives", label: "Objectives" },
+    { id: "audience", label: "Target audience" },
+    { id: "deliverables", label: "Deliverables" },
+    { id: "platforms", label: "Platforms" },
+    { id: "timeline", label: "Timeline" },
+    { id: "budget", label: "Budget" },
+    { id: "revisions", label: "Revisions" },
+    { id: "references", label: "References" },
+    { id: "contact", label: "Your details" },
+    { id: "review", label: "Review" },
+  ]), []);
+
+  const idx = step;
+  const total = steps.length;
+  const pct = step < 0 ? 0 : Math.round(((step) / total) * 100);
+
+  async function analyseWebsite() {
+    if (!a.website) return;
+    setAiBusy(true); setAiNote("");
+    try {
+      const text = await callClaude([{
+        role: "user",
+        content: `Research this company's website: ${a.website}\n\nWrite a business background ABOUT THE COMPANY — what they do, what they sell or offer, who their customers are, and how they position themselves. Write it in first person plural, as if the business is describing itself (e.g. "We're a specialty coffee roaster with three cafés\u2026").\n\nStrict rules: never mention or describe the website itself. No phrases like "the website", "the site", "their online presence", or comments on design/polish. Only talk about the business. 2-4 sentences, plain and factual.\n\nRespond ONLY with a JSON object, no preamble, no markdown fences:\n{"background": "the business background text"}`
+      }], { useSearch: true });
+      const j = parseJSON(text);
+      if (j && j.background) {
+        set({ background: j.background });
+        setShowBg(true);
+        setAiNote("Here's your business background — edit anything that's off.");
+      } else { setShowBg(true); setAiNote("Couldn't read that site — write a couple of lines about the business instead."); }
+    } catch {
+      setShowBg(true);
+      setAiNote("Couldn't reach the analysis service — write a couple of lines about the business instead.");
+    }
+    setAiBusy(false);
+  }
+
+  async function submit() {
+    setSubmitState("working");
+    const payload = { ...a, projectName };
+    try {
+      const text = await callClaude([{
+        role: "user",
+        content: `You are structuring a client intake into a professional creative brief for a freelancer.\n\nClient answers (JSON):\n${JSON.stringify(payload, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"professionalBrief": "a well-written multi-paragraph creative brief in professional plain English",\n"missingInfo": ["specific information the client did not provide"],\n"followUpQuestions": ["sharp questions the freelancer should ask before quoting"],\n"unclearRequirements": ["requirements that are ambiguous, quoting the vague phrase"],\n"scopeGaps": ["work implied by the answers but not explicitly scoped"]}`
+      }]);
+      const j = parseJSON(text);
+      if (j && j.professionalBrief) { setResult(j); setSubmitState("done"); onDone && onDone(j, payload); return; }
+      throw new Error("bad json");
+    } catch {
+      const fallback = {
+        professionalBrief: `${payload.overview}\n\n${payload.background}\n\nObjectives: ${payload.objectives.join(", ") || "—"}. Audience: ${payload.audience || "—"}.\nDeliverables: ${payload.deliverables.join(", ") || "—"} across ${payload.platforms.join(", ") || "—"}.\nTimeline: ${payload.timelineWeeks} weeks. Budget: ${money(payload.budget)}${payload.budgetFlexible ? " (flexible)" : " (fixed)"} with ${payload.revisions} revision rounds.`,
+        missingInfo: [], followUpQuestions: [], unclearRequirements: [], scopeGaps: [],
+        _fallback: true,
+      };
+      setResult(fallback); setSubmitState("done"); onDone && onDone(fallback, payload);
+    }
+  }
+
+  const canNext = () => {
+    const s = steps[idx]?.id;
+    if (s === "website") return a.background.trim().length > 0;
+    if (s === "overview") return a.overview.trim().length > 0;
+    if (s === "objectives") return a.objectives.length > 0;
+    if (s === "audience") return a.audience.trim().length > 0;
+    if (s === "deliverables") return a.deliverables.length > 0;
+    if (s === "contact") return a.name.trim() && /.+@.+\..+/.test(a.email);
+    return true;
+  };
+
+  const next = () => setStep(s => Math.min(s + 1, total - 1));
+  const back = () => setStep(s => Math.max(s - 1, 0));
+
+  const toggle = (key, val) => set({ [key]: a[key].includes(val) ? a[key].filter(v => v !== val) : [...a[key], val] });
+
+  /* ---- screens ---- */
+
+  if (submitState === "working" || submitState === "done") {
+    return (
+      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
+        <div className="rise max-w-xl">
+          {submitState === "working" ? (<>
+            <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
+            <h2 className="display text-3xl font-semibold mb-3">Turning your answers into a brief…</h2>
+            <p style={{ color: "var(--muted)" }}>AI is rewriting your responses into a professional creative brief and checking for anything missing. This takes a few seconds.</p>
+          </>) : (<>
+            <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
+            <h2 className="display text-3xl md:text-4xl font-semibold mb-3">All done — thank you.</h2>
+            <p className="mb-8" style={{ color: "var(--muted)" }}>Your brief has been sent to {freelancer}. They'll review it and follow up shortly.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download my brief</Btn>
+              {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
+            </div>
+            <p className="mono text-[11px] mt-5" style={{ color: "var(--muted)" }}>Keep a copy — handy if you're briefing other vendors too.</p>
+            <div className="pr-print-area" style={{ position: "fixed", left: "-9999px", top: 0 }}>
+              <h1 className="display text-2xl font-semibold mb-4">Project brief — {projectName}</h1>
+              <p style={{ whiteSpace: "pre-wrap" }}>{result && result.professionalBrief ? result.professionalBrief : ""}</p>
+              <h2 className="display text-lg font-semibold mt-6 mb-2">Key details</h2>
+              <p>Objectives: {a.objectives.join(", ") || "—"}</p>
+              <p>Deliverables: {a.deliverables.map(d => d === "Others" ? (a.deliverablesOther || "Others") : d).join(", ") || "—"}</p>
+              <p>Platforms: {a.platforms.join(", ") || "—"}</p>
+              <p>Timeline: {a.timelineWeeks} weeks</p>
+              <p>Budget: {money(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</p>
+              <p>Revisions: {a.revisions}</p>
+              <p>References: {a.references || "—"}</p>
+              <p>Avoid: {a.referencesAvoid || "—"}</p>
+              <p>Contact: {a.name} · {a.email}</p>
+            </div>
+          </>)}
+        </div>
+      </IntakeShell>
+    );
+  }
+
+  if (step === -1) {
+    return (
+      <IntakeShell pct={0} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
+        <div className="rise max-w-xl">
+          <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>{freelancer.toUpperCase()} → {projectName.toUpperCase()}</div>
+          <h1 className="display text-3xl md:text-5xl font-semibold leading-tight mb-4">Let's shape this project properly.</h1>
+          <p className="text-base md:text-lg mb-8" style={{ color: "var(--muted)" }}>
+            A few guided questions — one at a time, about five minutes. Your answers save automatically, so you can leave and come back.
+          </p>
+          <Btn onClick={() => setStep(0)} className="text-base px-7 py-4">Start <ArrowRight className="w-4 h-4" /></Btn>
+          <div className="mt-4 mono text-xs" style={{ color: "var(--muted)" }}>No account needed</div>
+        </div>
+      </IntakeShell>
+    );
+  }
+
+  const s = steps[idx].id;
+
+  return (
+    <IntakeShell pct={pct} saved={saved} onExit={onExit} projectName={projectName} freelancer={freelancer}>
+      <div className="max-w-2xl w-full">
+        {s === "website" && (
+          <Q idx={idx} total={total} title="Let's start with your business." hint="Paste your website and AI writes your business background for you. No website? You can type it instead.">
+            <div className="flex flex-col md:flex-row gap-3">
+              <input type="url" value={a.website} onChange={e => set({ website: e.target.value })}
+                placeholder="https://yourbusiness.com"
+                className="flex-1 rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+              <Btn onClick={analyseWebsite} disabled={!a.website || aiBusy}>
+                {aiBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {aiBusy ? "Reading your site…" : "Analyse"}
+              </Btn>
+            </div>
+            {!(showBg || a.background.trim()) && (
+              <button className="mt-5 text-sm underline underline-offset-4" style={{ color: "var(--muted)" }}
+                onClick={() => { set({ website: "" }); setAiNote(""); setShowBg(true); }}>
+                I don't have a website
+              </button>
+            )}
+            {(showBg || a.background.trim()) && (
+              <div className="mt-6 fade">
+                <div className="flex items-center gap-2 mb-2">
+                  <SectionLabel>Business background</SectionLabel>
+                  {aiNote && <span className="mono text-[11px] mb-2" style={{ color: "var(--accent)" }}>· AI draft</span>}
+                </div>
+                {aiNote && <p className="text-sm mb-3 flex items-start gap-2" style={{ color: "var(--accent)" }}><Sparkles className="w-4 h-4 shrink-0 mt-0.5" /> {aiNote}</p>}
+                <VoiceTA value={a.background} onChange={v => set({ background: v })}
+                  placeholder="What you do, who you serve, and anything that makes you different…"
+                  rows={4} cleanHint="business background" />
+              </div>
+            )}
+          </Q>
+        )}
+
+        {s === "overview" && (
+          <Q idx={idx} total={total} title="What's this project about?"
+            hint={'In your own words — one or two sentences is fine. Type or speak. Example: "We’re opening a second yoga studio and need a social campaign to fill trial classes."'}>
+            <VoiceTA value={a.overview} onChange={v => set({ overview: v })} placeholder="We need help with…" cleanHint="project overview" />
+          </Q>
+        )}
+
+        {s === "objectives" && (
+          <Q idx={idx} total={total} title="What should this project achieve?" hint="Pick everything that applies.">
+            <div className="flex flex-wrap gap-2.5">
+              {OBJECTIVES.map(o => <Chip key={o} active={a.objectives.includes(o)} onClick={() => toggle("objectives", o)}>{o}</Chip>)}
+            </div>
+          </Q>
+        )}
+
+        {s === "audience" && (
+          <Q idx={idx} total={total} title="Who are we trying to reach?" hint={'Example: "Women 24–38 within 5km of Bangsar who currently work out at gyms."'}>
+            <VoiceTA value={a.audience} onChange={v => set({ audience: v })} placeholder="Our ideal customer is…" rows={4} cleanHint="target audience description" />
+          </Q>
+        )}
+
+        {s === "deliverables" && (
+          <Q idx={idx} total={total} title="What do you need made?" hint="Select all that apply.">
+            <div className="flex flex-wrap gap-2.5">
+              {DELIVERABLE_OPTIONS.map(d => <Chip key={d} active={a.deliverables.includes(d)} onClick={() => toggle("deliverables", d)}>{d}</Chip>)}
+            </div>
+            {a.deliverables.includes("Others") && (
+              <input type="text" value={a.deliverablesOther} onChange={e => set({ deliverablesOther: e.target.value })}
+                placeholder="Tell us what else you need…"
+                className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            )}
+          </Q>
+        )}
+
+        {s === "platforms" && (
+          <Q idx={idx} total={total} title="Where will this live?" hint="Platforms and channels the work is for.">
+            <div className="flex flex-wrap gap-2.5">
+              {PLATFORMS.map(p => <Chip key={p} active={a.platforms.includes(p)} onClick={() => toggle("platforms", p)}>{p}</Chip>)}
+            </div>
+          </Q>
+        )}
+
+        {s === "timeline" && (
+          <Q idx={idx} total={total} title="When do you need it?" hint="A rough timeline is fine — drag the slider.">
+            <Slider value={a.timelineWeeks} min={1} max={24} onChange={v => set({ timelineWeeks: v })}
+              format={v => v === 24 ? "24+ weeks" : `${v} week${v > 1 ? "s" : ""}`} />
+          </Q>
+        )}
+
+        {s === "budget" && (
+          <Q idx={idx} total={total} title="What's the budget?" hint="A range helps scope the work honestly — nothing is locked in.">
+            <Slider value={a.budget} min={1000} max={100000} step={500} onChange={v => set({ budget: v })}
+              format={v => v === 100000 ? "RM100,000+" : money(v)} />
+            <div className="mt-8 flex items-center gap-3">
+              <button onClick={() => set({ budgetFlexible: !a.budgetFlexible })}
+                className="relative w-12 h-7 rounded-full transition-colors"
+                style={{ background: a.budgetFlexible ? "var(--accent)" : "var(--line)" }}
+                aria-label="Budget is flexible">
+                <span className="absolute top-1 w-5 h-5 rounded-full transition-all"
+                  style={{ background: "var(--surface)", left: a.budgetFlexible ? "26px" : "4px", boxShadow: "var(--shadow)" }} />
+              </button>
+              <span className="text-sm">This budget is flexible for the right scope</span>
+            </div>
+          </Q>
+        )}
+
+        {s === "revisions" && (
+          <Q idx={idx} total={total} title="How many revision rounds do you expect?" hint="This helps quote fairly — most projects run smoothly on two.">
+            <Slider value={a.revisions} min={1} max={5} onChange={v => set({ revisions: v })}
+              format={v => `${v} round${v > 1 ? "s" : ""}`} />
+          </Q>
+        )}
+
+        {s === "references" && (
+          <Q idx={idx} total={total} title="Show us what you like — and what to avoid." hint="Both help us hit the mark faster.">
+            <SectionLabel>Links or screenshots you want us to check out</SectionLabel>
+            <TA value={a.references} onChange={v => set({ references: v })}
+              placeholder={"https://…  — love the tone\nhttps://…  — great layout"} rows={3} />
+            <button
+              onClick={() => set({ refShots: [...a.refShots, { name: `screenshot-${a.refShots.length + 1}.png` }] })}
+              className="mt-3 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+              style={{ background: "var(--surface)", border: "1px dashed var(--line)", color: "var(--muted)" }}>
+              <Image className="w-4 h-4" /> Add a screenshot
+            </button>
+            {a.refShots.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {a.refShots.map((f, i) => (
+                  <span key={i} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                    <Paperclip className="w-3.5 h-3.5" style={{ color: "var(--muted)" }} /> {f.name}
+                    <button onClick={() => set({ refShots: a.refShots.filter((_, j) => j !== i) })} aria-label="Remove screenshot"><X className="w-3.5 h-3.5" style={{ color: "var(--muted)" }} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="mt-6">
+              <SectionLabel>What you don't want to see</SectionLabel>
+              <TA value={a.referencesAvoid} onChange={v => set({ referencesAvoid: v })}
+                placeholder="Too corporate, cluttered layouts, stock-photo handshakes…" rows={3} autoFocus={false} />
+            </div>
+          </Q>
+        )}
+
+        {s === "contact" && (
+          <Q idx={idx} total={total} title="Last thing — who are you?" hint="So the brief lands with your name on it.">
+            <div className="space-y-3">
+              <input type="text" value={a.name} onChange={e => set({ name: e.target.value })} placeholder="Full name"
+                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+              <input type="email" value={a.email} onChange={e => set({ email: e.target.value })} placeholder="Email address"
+                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} />
+            </div>
+          </Q>
+        )}
+
+        {s === "review" && (
+          <Q idx={idx} total={total} title="Quick check before we send." hint="Tap any answer to change it.">
+            <div className="space-y-2">
+              {[
+                ["Website", a.website || "None", 0],
+                ["Background", a.background, 0],
+                ["Overview", a.overview, 1],
+                ["Objectives", a.objectives.join(", "), 2],
+                ["Deliverables", a.deliverables.map(d => d === "Others" ? (a.deliverablesOther || "Others") : d).join(", "), 4],
+                ["Timeline", `${a.timelineWeeks} weeks`, 6],
+                ["Budget", `${money(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`, 7],
+                ["Avoid", a.referencesAvoid || "—", 9],
+                ["Contact", `${a.name} · ${a.email}`, 10],
+              ].map(([k, v, go]) => (
+                <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
+                  style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                  <span className="mono text-[11px] uppercase tracking-wider w-24 shrink-0 pt-0.5" style={{ color: "var(--muted)" }}>{k}</span>
+                  <span className="text-sm flex-1 line-clamp-2">{v || "—"}</span>
+                  <PenLine className="w-3.5 h-3.5 shrink-0 mt-1" style={{ color: "var(--muted)" }} />
+                </button>
+              ))}
+            </div>
+            <Btn onClick={submit} className="mt-6 text-base px-7 py-4">
+              <Sparkles className="w-4 h-4" /> Send my brief
+            </Btn>
+          </Q>
+        )}
+
+        {s !== "review" && (
+          <div className="mt-8 flex items-center gap-3">
+            {idx > 0 && <Btn variant="secondary" onClick={back} aria-label="Back"><ArrowLeft className="w-4 h-4" /></Btn>}
+            <Btn onClick={next} disabled={!canNext()}>Continue <ArrowRight className="w-4 h-4" /></Btn>
+            {steps[idx].optional && <button onClick={next} className="text-sm underline underline-offset-4" style={{ color: "var(--muted)" }}>Skip</button>}
+          </div>
+        )}
+      </div>
+    </IntakeShell>
+  );
+}
+
+function IntakeShell({ children, pct, saved, onExit, projectName, freelancer }) {
+  return (
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
+      <div className="h-1 w-full" style={{ background: "var(--line)" }}>
+        <div className="h-1 transition-all duration-500" style={{ width: `${pct}%`, background: "var(--accent)" }} />
+      </div>
+      <header className="flex items-center justify-between px-5 md:px-10 py-4">
+        <div className="flex items-center gap-2">
+          <Wordmark small />
+          <span className="mono text-[11px] hidden md:inline" style={{ color: "var(--muted)" }}>· {freelancer}</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="mono text-[11px] flex items-center gap-1.5" style={{ color: saved ? "var(--good)" : "var(--muted)" }}>
+            {saved ? <Check className="w-3 h-3" /> : <Loader2 className="w-3 h-3 animate-spin" />}
+            {saved ? "Saved" : "Saving"}
+          </span>
+          {onExit && <button onClick={onExit} aria-label="Exit intake"><X className="w-4 h-4" style={{ color: "var(--muted)" }} /></button>}
+        </div>
+      </header>
+      <main className="flex-1 flex items-center px-5 md:px-10 pb-16 pt-4 md:pt-0">
+        <div className="w-full max-w-3xl mx-auto">{children}</div>
+      </main>
+    </div>
+  );
+}
+
+const Wordmark = ({ small }) => (
+  <span className={cx("display font-semibold tracking-tight", small ? "text-base" : "text-xl")}>
+    prelima<span style={{ color: "var(--accent)" }}>.</span>
+  </span>
+);
+
+/* ------------------------------------------------------------------ */
+/* Landing page                                                        */
+/* ------------------------------------------------------------------ */
+
+function Landing({ onStart, onSignIn, dark, setDark }) {
+  const soon = [
+    ["Invoices", "Deposits and balances, generated from accepted quotations."],
+    ["Payments", "Payment links, milestones and instalments — get paid without the chase."],
+  ];
+  return (
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
+      <header className="flex items-center justify-between px-5 md:px-12 py-5 max-w-5xl mx-auto w-full">
+        <Wordmark />
+        <div className="flex items-center gap-2">
+          <button onClick={() => setDark(!dark)} aria-label="Toggle dark mode" className="p-2 rounded-lg" style={{ color: "var(--muted)" }}>
+            {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+          <Btn variant="secondary" onClick={onSignIn} className="px-4 py-2">Sign in</Btn>
+        </div>
+      </header>
+
+      {/* One word. One action. */}
+      <main className="flex-1 flex flex-col items-center justify-center px-5 text-center py-20 md:py-28">
+        <button onClick={onStart} className="rise group" aria-label="Create brief">
+          <span className="display block text-6xl md:text-9xl font-semibold tracking-tight leading-none transition-transform duration-200 group-hover:scale-[1.02] group-active:scale-[.99]">
+            Create brief<span style={{ color: "var(--accent)" }}>.</span>
+          </span>
+        </button>
+        <div className="rise mt-10" style={{ animationDelay: ".1s" }}>
+          <Btn onClick={onStart} className="text-base px-8 py-4">Create Free Brief <ArrowRight className="w-4 h-4" /></Btn>
+        </div>
+        <p className="rise mono text-[11px] uppercase tracking-[0.16em] mt-8" style={{ color: "var(--muted)", animationDelay: ".18s" }}>
+          Every successful project starts with a good brief
+        </p>
+      </main>
+
+      {/* Features */}
+      <section className="max-w-5xl mx-auto w-full px-5 md:px-12 pb-24">
+        <div className="flex items-center gap-3 mb-5">
+          <SectionLabel>Features</SectionLabel>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="p-6" style={{ borderColor: "var(--accent)" }}>
+            <div className="flex items-center justify-between mb-4">
+              <Sparkles className="w-5 h-5" style={{ color: "var(--accent)" }} />
+              <Tag tone="good">Live</Tag>
+            </div>
+            <div className="font-semibold mb-1.5">Briefs & quotations</div>
+            <div className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
+              One link, no client login. AI structures the brief — then quote it with itemised or one-total billing.
+            </div>
+          </Card>
+          {soon.map(([t, d]) => (
+            <Card key={t} className="p-6 select-none" style={{ opacity: .48, background: "var(--surface-2)" }} aria-disabled="true">
+              <div className="flex items-center justify-between mb-4">
+                <Clock className="w-5 h-5" style={{ color: "var(--muted)" }} />
+                <Tag>Coming soon</Tag>
+              </div>
+              <div className="font-semibold mb-1.5">{t}</div>
+              <div className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{d}</div>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      <footer className="border-t px-5 md:px-12 py-8" style={{ borderColor: "var(--line)" }}>
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
+          <Wordmark small />
+          <span className="mono text-[11px]" style={{ color: "var(--muted)" }}>Free while in beta</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Dashboard shell + pages                                             */
+/* ------------------------------------------------------------------ */
+
+const COMING_SOON = ["invoices", "payments"];
+
+function ComingSoonPage({ title, body }) {
+  return (
+    <div className="fade">
+      <PageTitle title={title} />
+      <EmptyState icon={Clock} title="Coming soon" body={body} />
+    </div>
+  );
+}
+
+const NAV = [
+  ["dashboard", "Dashboard", LayoutDashboard],
+  ["quotations", "Quotations", FileText],
+  ["invoices", "Invoices", Receipt],
+  ["payments", "Payments", Wallet],
+  ["settings", "Settings", Settings],
+];
+
+function StatusTag({ s }) {
+  const tone = s === "Brief received" ? "accent" : s === "Quoted" || s === "Accepted" || s === "Paid" ? "good" : s === "Awaiting brief" || s === "Awaiting payment" || s === "Sent" ? "warn" : "muted";
+  return <Tag tone={tone}>{s}</Tag>;
+}
+
+function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPreviewIntake, dark, setDark }) {
+  const [page, setPage] = useState("dashboard");
+  const [openProject, setOpenProject] = useState(null);
+  const [copied, setCopied] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false);
+  const [wsName, setWsName] = useState("BETA Studio");
+  const [openQuote, setOpenQuote] = useState(null);
+
+  const createQuote = (projectId) => {
+    const p = projects.find(x => x.id === projectId);
+    const id = "q" + Date.now();
+    const number = `Q-2026-${String(quotes.length + 15).padStart(3, "0")}`;
+    const nq = {
+      id, number, projectId: projectId || null,
+      client: p ? p.client : "", title: p ? p.name : "",
+      mode: "itemised", consolidatedLabel: "", status: "Draft",
+      created: "6 Jul 2026", sst: 0, logo: null, paymentMethod: "Bank transfer", paymentTerms: "",
+      bank: { name: "", account: "", holder: "" },
+      items: [{ title: "", details: "", qty: 1, unit: 0 }],
+    };
+    setQuotes(qs => [nq, ...qs]);
+    setPage("quotations"); setOpenProject(null); setOpenQuote(id);
+  };
+
+  const copy = (link) => { setCopied(link); setTimeout(() => setCopied(""), 1500); };
+
+  const project = projects.find(p => p.id === openProject);
+
+  return (
+    <div className="min-h-screen flex" style={{ background: "var(--bg)" }}>
+      {/* Sidebar */}
+      <aside className={cx("fixed md:static inset-y-0 left-0 z-40 w-60 flex-col p-4 transition-transform md:translate-x-0 md:flex",
+        mobileNav ? "flex translate-x-0" : "hidden md:flex")}
+        style={{ background: "var(--surface)", borderRight: "1px solid var(--line)" }}>
+        <div className="flex items-center justify-between px-2 py-2 mb-6">
+          <Wordmark small />
+          <button className="md:hidden" onClick={() => setMobileNav(false)} aria-label="Close menu"><X className="w-4 h-4" /></button>
+        </div>
+        <nav className="space-y-1 flex-1">
+          {NAV.map(([id, label, Icon]) => (
+            <button key={id} onClick={() => { setPage(id); setOpenProject(null); setMobileNav(false); }}
+              className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors"
+              style={{
+                ...(page === id ? { background: "var(--accent-soft)", color: "var(--accent)" } : { color: "var(--muted)" }),
+                ...(COMING_SOON.includes(id) ? { opacity: .45 } : {}),
+              }}>
+              <Icon className="w-4 h-4" /> {label}
+              {COMING_SOON.includes(id) && <Tag>Soon</Tag>}
+            </button>
+          ))}
+        </nav>
+        <div className="rounded-xl p-3 flex items-center gap-3" style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold shrink-0" style={{ background: "var(--accent)", color: "var(--accent-ink)" }}>{wsName[0] || "?"}</div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium truncate">{wsName}</div>
+            <button onClick={onLogout} className="text-xs" style={{ color: "var(--muted)" }}>Sign out</button>
+          </div>
+        </div>
+      </aside>
+      {mobileNav && <div className="fixed inset-0 z-30 md:hidden" style={{ background: "rgba(0,0,0,.4)" }} onClick={() => setMobileNav(false)} />}
+
+      {/* Main */}
+      <div className="flex-1 min-w-0">
+        <header className="flex items-center justify-between px-5 md:px-8 py-4 border-b sticky top-0 z-20" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
+          <div className="flex items-center gap-3">
+            <button className="md:hidden" onClick={() => setMobileNav(true)} aria-label="Open menu"><LayoutDashboard className="w-5 h-5" /></button>
+            <div className="hidden md:flex items-center gap-2 rounded-xl px-3 py-2 w-72" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+              <Search className="w-4 h-4" style={{ color: "var(--muted)" }} />
+              <input placeholder="Search projects, clients…" className="bg-transparent text-sm flex-1 outline-none border-0" style={{ color: "var(--ink)" }} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setDark(!dark)} aria-label="Toggle dark mode" className="p-2 rounded-lg" style={{ color: "var(--muted)" }}>
+              {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <Btn onClick={() => setShowNew(true)} className="px-4 py-2"><Plus className="w-4 h-4" /> New project</Btn>
+          </div>
+        </header>
+
+        <main className="p-5 md:p-8 max-w-5xl">
+          {project ? (
+            <ProjectDetail project={project} quotes={quotes} onBack={() => setOpenProject(null)} copy={copy} copied={copied} onPreviewIntake={onPreviewIntake} onCreateQuote={createQuote} onOpenQuote={(id) => { setPage("quotations"); setOpenProject(null); setOpenQuote(id); }} />
+          ) : page === "dashboard" ? (
+            <DashboardHome projects={projects} quotes={quotes} open={setOpenProject} />
+          ) : page === "quotations" ? (
+            <QuotationsBoard quotes={quotes} setQuotes={setQuotes} projects={projects}
+              openQuote={openQuote} setOpenQuote={setOpenQuote} createQuote={createQuote} />
+          ) : page === "invoices" ? (
+            <ComingSoonPage title="Invoices" body="Deposits and balances, generated from accepted quotations." />
+          ) : page === "payments" ? (
+            <PaymentsPage />
+          ) : (
+            <SettingsPage dark={dark} setDark={setDark} wsName={wsName} setWsName={setWsName} />
+          )}
+        </main>
+      </div>
+
+      {showNew && <NewProjectModal onClose={() => setShowNew(false)} onCreate={(p) => { setProjects(ps => [p, ...ps]); setShowNew(false); setPage("projects"); setOpenProject(p.id); }} />}
+    </div>
+  );
+}
+
+function PageTitle({ title, sub, action }) {
+  return (
+    <div className="flex items-end justify-between mb-6">
+      <div>
+        <h1 className="display text-2xl md:text-3xl font-semibold tracking-tight">{title}</h1>
+        {sub && <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>{sub}</p>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function DashboardHome({ projects, quotes, open }) {
+  const briefs = projects.filter(p => p.briefComplete).length;
+  const quotesSent = quotes.filter(qt => qt.status !== "Draft").length;
+  const invoices = projects.filter(p => p.invoice).length;
+  const standalone = quotes.filter(qt => !qt.projectId && qt.status !== "Draft").reduce((s, qt) => s + quoteTotal(qt), 0);
+  const pipeline = projects.filter(p => !isPaid(p)).reduce((s, p) => s + projectValue(p, quotes), 0) + standalone;
+  return (
+    <div className="fade">
+      <PageTitle title="Dashboard" sub="Briefs, quotes and money — one view." />
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
+        {[
+          ["Briefs received", briefs, FileText],
+          ["Quotations sent", quotesSent, Send],
+          ["Invoices sent", invoices, Receipt],
+          ["Pipeline value", money(pipeline), CircleDollarSign],
+        ].map(([label, val, Icon]) => (
+          <Card key={label} className="p-4 md:p-5">
+            <Icon className="w-4 h-4 mb-3" style={{ color: "var(--accent)" }} />
+            <div className="display text-xl md:text-2xl font-semibold truncate">{val}</div>
+            <div className="text-xs md:text-sm mt-0.5" style={{ color: "var(--muted)" }}>{label}</div>
+          </Card>
+        ))}
+      </div>
+
+      <SectionLabel>Projects</SectionLabel>
+      <Card className="overflow-hidden">
+        <div className="hidden md:grid grid-cols-12 gap-3 px-5 py-3 mono text-[11px] uppercase tracking-wider border-b"
+          style={{ color: "var(--muted)", borderColor: "var(--line)" }}>
+          <span className="col-span-4">Project</span>
+          <span className="col-span-2">Status</span>
+          <span className="col-span-2">Quotation</span>
+          <span className="col-span-2">Invoice</span>
+          <span className="col-span-2 text-right">Value</span>
+        </div>
+        {projects.map((p, i) => (
+          <button key={p.id} onClick={() => open(p.id)}
+            className="w-full text-left grid grid-cols-2 md:grid-cols-12 gap-2 md:gap-3 items-center px-4 md:px-5 py-4 transition-colors hover:opacity-90"
+            style={{ borderTop: i > 0 ? "1px solid var(--line)" : "none" }}>
+            <div className="col-span-2 md:col-span-4 min-w-0">
+              <div className="font-medium text-sm truncate">{p.name}</div>
+              <div className="text-xs truncate" style={{ color: "var(--muted)" }}>{p.client}</div>
+            </div>
+            <div className="md:col-span-2"><StatusTag s={p.status} /></div>
+            <div className="md:col-span-2 text-right md:text-left">
+              {quoteFor(p, quotes) ? <StatusTag s={quoteFor(p, quotes).status} /> : <span className="mono text-xs" style={{ color: "var(--muted)" }}>—</span>}
+            </div>
+            <div className="md:col-span-2">
+              {p.invoice ? <StatusTag s={p.invoice.status} /> : <span className="mono text-xs" style={{ color: "var(--muted)" }}>—</span>}
+            </div>
+            <div className="md:col-span-2 text-right mono text-sm">
+              {projectValue(p, quotes) ? money(projectValue(p, quotes)) : <span style={{ color: "var(--muted)" }}>—</span>}
+            </div>
+          </button>
+        ))}
+      </Card>
+      <p className="mono text-[11px] mt-3" style={{ color: "var(--muted)" }}>
+        Value = quotation total when quoted, otherwise the client's budget from the brief. Pipeline adds standalone sent quotes and excludes paid projects.
+      </p>
+    </div>
+  );
+}
+
+function ProjectDetail({ project: p, quotes, onBack, copy, copied, onPreviewIntake, onCreateQuote, onOpenQuote }) {
+  const pq = quoteFor(p, quotes);
+  const [tab, setTab] = useState("overview");
+  const [followUpsSent, setFollowUpsSent] = useState(false);
+  const tabs = ["overview", "quotation", "invoice", "payments", "activity"];
+  return (
+    <div className="fade">
+      <button onClick={onBack} className="mono text-[11px] uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
+        <ArrowLeft className="w-3 h-3" /> Dashboard
+      </button>
+      <div className="flex flex-wrap items-center gap-3 mb-1">
+        <h1 className="display text-2xl md:text-3xl font-semibold tracking-tight">{p.name}</h1>
+        <StatusTag s={p.status} />
+      </div>
+      <p className="text-sm mb-5" style={{ color: "var(--muted)" }}>{p.client} · created {p.created}</p>
+
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <button onClick={() => copy(p.link)} className="flex items-center gap-2 rounded-xl px-4 py-2.5 mono text-xs"
+          style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+          {copied === p.link ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
+          {copied === p.link ? "Link copied" : p.link}
+        </button>
+        <Btn variant="secondary" className="px-4 py-2.5 text-xs" onClick={onPreviewIntake}><ExternalLink className="w-3.5 h-3.5" /> Preview client flow</Btn>
+      </div>
+
+      <div className="flex gap-1 overflow-x-auto border-b mb-6" style={{ borderColor: "var(--line)" }}>
+        {tabs.map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className="px-4 py-2.5 text-sm font-medium capitalize whitespace-nowrap border-b-2 -mb-px transition-colors"
+            style={tab === t ? { borderColor: "var(--accent)", color: "var(--ink)" } : { borderColor: "transparent", color: "var(--muted)" }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "overview" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3 md:gap-4">
+            {[["Value", projectValue(p, quotes) ? money(projectValue(p, quotes)) : "—"], ["Timeline", p.timelineWeeks ? `${p.timelineWeeks} weeks` : "—"], ["Brief", p.briefComplete ? "Complete" : "Awaiting client"]].map(([k, v]) => (
+              <Card key={k} className="p-4 md:p-5"><SectionLabel>{k}</SectionLabel><div className="display text-lg md:text-xl font-semibold">{v}</div></Card>
+            ))}
+          </div>
+
+          {!p.brief ? (
+            <EmptyState icon={Clock} title="Waiting on the client" body="They've opened the link but haven't finished. Answers autosave, so they can pick up where they left off." action={<Btn variant="secondary" onClick={onPreviewIntake}>Preview what they see</Btn>} />
+          ) : (
+            <>
+              <Card className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <SectionLabel>The brief</SectionLabel>
+                  <Btn variant="secondary" className="px-3 py-1.5 text-xs"><PenLine className="w-3.5 h-3.5" /> Edit</Btn>
+                </div>
+                <div className="text-sm leading-relaxed whitespace-pre-line">{p.brief.professionalBrief}</div>
+              </Card>
+
+              <div className="flex items-center justify-between">
+                <SectionLabel>AI checks — generated when the client submitted</SectionLabel>
+                {p.brief.followUpQuestions?.length > 0 && (
+                  <button onClick={() => setFollowUpsSent(true)}
+                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium"
+                    style={followUpsSent ? { background: "color-mix(in srgb, var(--good) 12%, transparent)", color: "var(--good)" } : { background: "var(--accent)", color: "var(--accent-ink)" }}>
+                    {followUpsSent ? <><Check className="w-3.5 h-3.5" /> Follow-ups sent to client</> : <><Send className="w-3.5 h-3.5" /> Send follow-ups to client</>}
+                  </button>
+                )}
+              </div>
+              <div className="grid md:grid-cols-2 gap-4">
+                <InsightCard icon={HelpCircle} tone="accent" title="Follow-up questions" items={p.brief.followUpQuestions} />
+                <InsightCard icon={AlertTriangle} tone="warn" title="Missing information" items={p.brief.missingInfo} />
+                <InsightCard icon={Search} tone="muted" title="Unclear requirements" items={p.brief.unclearRequirements} />
+                <InsightCard icon={FolderKanban} tone="warn" title="Possible scope gaps" items={p.brief.scopeGaps} />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === "quotation" && (pq ? (
+        <Card className="p-6 max-w-2xl">
+          <div className="flex items-center justify-between mb-5">
+            <div><SectionLabel>Quotation</SectionLabel><div className="mono text-sm">{pq.number}</div></div>
+            <StatusTag s={pq.status} />
+          </div>
+          {pq.mode === "consolidated" ? (
+            <div className="flex justify-between py-3 text-sm">
+              <span>{pq.consolidatedLabel || "Project fee"}</span><span className="mono">{money(quoteSubtotal(pq))}</span>
+            </div>
+          ) : (
+            pq.items.map((it, i) => (
+              <div key={i} className="py-3 border-b" style={{ borderColor: "var(--line)" }}>
+                <div className="flex justify-between text-sm">
+                  <span className="font-medium">{it.qty > 1 ? `${it.qty} × ` : ""}{it.title}</span>
+                  <span className="mono">{money((Number(it.qty) || 0) * (Number(it.unit) || 0))}</span>
+                </div>
+                {it.details && (
+                  <ul className="mt-1.5 space-y-0.5">
+                    {it.details.split("\n").filter(Boolean).map((l, j) => (
+                      <li key={j} className="text-xs flex gap-2" style={{ color: "var(--muted)" }}><span>•</span><span>{l}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))
+          )}
+          <div className="flex justify-between pt-3 text-sm">
+            <span style={{ color: "var(--muted)" }}>Subtotal</span><span className="mono">{money(quoteSubtotal(pq))}</span>
+          </div>
+          {pq.sst > 0 && (
+            <div className="flex justify-between pt-1.5 text-sm">
+              <span style={{ color: "var(--muted)" }}>SST {pq.sst}%</span><span className="mono">{money(quoteTotal(pq) - quoteSubtotal(pq))}</span>
+            </div>
+          )}
+          <div className="flex justify-between py-3 font-semibold">
+            <span>Total</span><span className="mono">{money(quoteTotal(pq))}</span>
+          </div>
+          <Btn variant="secondary" className="mt-4 px-4 py-2 text-xs" onClick={() => onOpenQuote(pq.id)}>
+            <PenLine className="w-3.5 h-3.5" /> Open in Quotations
+          </Btn>
+        </Card>
+      ) : (
+        <EmptyState icon={FileText} title="No quotation yet"
+          body="Create one for this project — it'll be tagged to the brief automatically so everything stays grouped."
+          action={<Btn onClick={() => onCreateQuote(p.id)}><Plus className="w-4 h-4" /> Create quotation</Btn>} />
+      ))}
+
+      {tab === "invoice" && (
+        <EmptyState icon={Receipt} title="Invoices are coming soon" body="Deposits and balances will generate from an accepted quotation, with a payment link attached." />
+      )}
+
+      {tab === "payments" && (
+        <EmptyState icon={Wallet} title="Payments are coming soon" body="Payment links, milestone payments and instalments will live here. The project structure is already built for them." />
+      )}
+
+      {tab === "activity" && (
+        <div className="space-y-0">
+          {p.activity.map((ev, i) => (
+            <div key={i} className="flex gap-4 pb-6 relative">
+              <div className="flex flex-col items-center">
+                <div className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: "var(--accent)" }} />
+                {i < p.activity.length - 1 && <div className="w-px flex-1" style={{ background: "var(--line)" }} />}
+              </div>
+              <div>
+                <div className="text-sm">{ev.e}</div>
+                <div className="mono text-[11px] mt-0.5" style={{ color: "var(--muted)" }}>{ev.t}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const InsightCard = ({ icon: Icon, tone, title, items }) => (
+  <Card className="p-5">
+    <div className="flex items-center gap-2 mb-3">
+      <Icon className="w-4 h-4" style={{ color: tone === "warn" ? "var(--warn)" : tone === "accent" ? "var(--accent)" : "var(--muted)" }} />
+      <span className="text-sm font-semibold">{title}</span>
+      <Tag tone={items?.length ? tone : "good"}>{items?.length || 0}</Tag>
+    </div>
+    {items?.length ? (
+      <ul className="space-y-2">
+        {items.map((it, i) => <li key={i} className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{it}</li>)}
+      </ul>
+    ) : <div className="text-sm" style={{ color: "var(--muted)" }}>Nothing flagged.</div>}
+  </Card>
+);
+
+const EmptyState = ({ icon: Icon, title, body, action }) => (
+  <Card className="p-10 text-center max-w-lg mx-auto" style={{ background: "var(--surface-2)" }}>
+    <Icon className="w-6 h-6 mx-auto mb-4" style={{ color: "var(--muted)" }} />
+    <div className="font-semibold mb-1.5">{title}</div>
+    <p className="text-sm leading-relaxed mb-5" style={{ color: "var(--muted)" }}>{body}</p>
+    {action}
+  </Card>
+);
+
+function NewProjectModal({ onClose, onCreate }) {
+  const [name, setName] = useState("");
+  const [client, setClient] = useState("");
+  const create = () => {
+    const slug = Math.random().toString(36).slice(2, 6);
+    onCreate({
+      id: "p" + Date.now(), name: name || "Untitled project", client: client || "New client",
+      status: "Awaiting brief", created: "6 Jul 2026", budget: null, timelineWeeks: null,
+      link: `prelima.app/b/${slug}`, briefComplete: false, brief: null,
+      activity: [{ t: "6 Jul", e: "Project created — intake link generated" }],
+      files: [], quote: null, invoice: null,
+    });
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4" style={{ background: "rgba(0,0,0,.45)" }} onClick={onClose}>
+      <Card className="w-full max-w-md p-6 fade" onClick={e => e.stopPropagation()} style={{ boxShadow: "var(--shadow-lg)" }}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="display text-xl font-semibold">New project</h2>
+          <button onClick={onClose} aria-label="Close"><X className="w-4 h-4" style={{ color: "var(--muted)" }} /></button>
+        </div>
+        <div className="space-y-3 mb-5">
+          <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Project name — e.g. Website copy refresh" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />
+          <input type="text" value={client} onChange={e => setClient(e.target.value)} placeholder="Client or company name" className="w-full rounded-xl px-4 py-3 text-sm" />
+        </div>
+        <Btn onClick={create} className="w-full"><Link2 className="w-4 h-4" /> Create & generate intake link</Btn>
+      </Card>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Quotations                                                          */
+/* ------------------------------------------------------------------ */
+
+function QuotationsBoard({ quotes, setQuotes, projects, openQuote, setOpenQuote, createQuote }) {
+  const q = quotes.find(x => x.id === openQuote);
+  const update = (nq) => setQuotes(qs => qs.map(x => x.id === nq.id ? nq : x));
+  const remove = (id) => { setQuotes(qs => qs.filter(x => x.id !== id)); setOpenQuote(null); };
+
+  if (q) return <QuoteEditor quote={q} update={update} remove={remove} onBack={() => setOpenQuote(null)} projects={projects} />;
+
+  return (
+    <div className="fade">
+      <PageTitle title="Quotations" sub="Tag one to a project to keep things grouped."
+        action={<Btn onClick={() => createQuote(null)} className="px-4 py-2"><Plus className="w-4 h-4" /> New quotation</Btn>} />
+      {quotes.length === 0 ? (
+        <EmptyState icon={FileText} title="No quotations yet" body="Create one and tag it to a project, or keep it standalone." action={<Btn onClick={() => createQuote(null)}><Plus className="w-4 h-4" /> New quotation</Btn>} />
+      ) : (
+        <div className="space-y-2">
+          {quotes.map(qt => (
+            <Card key={qt.id} className="p-4 flex items-center gap-4 cursor-pointer hover:opacity-90" onClick={() => setOpenQuote(qt.id)}>
+              <span className="mono text-xs w-24 shrink-0" style={{ color: "var(--muted)" }}>{qt.number}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{qt.title || "Untitled quotation"}</div>
+                <div className="text-xs truncate" style={{ color: "var(--muted)" }}>{qt.client || "No client"}{qt.projectId ? " · tagged to project" : ""}{qt.sst ? ` · SST ${qt.sst}%` : ""}</div>
+              </div>
+              <span className="mono text-sm">{money(quoteTotal(qt))}</span>
+              <StatusTag s={qt.status} />
+              <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--muted)" }} />
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LogoDrop({ logo, onLogo }) {
+  const inputRef = useRef(null);
+  const [over, setOver] = useState(false);
+  const handle = (file) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    const r = new FileReader();
+    r.onload = () => onLogo(r.result);
+    r.readAsDataURL(file);
+  };
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => { e.preventDefault(); setOver(false); handle(e.dataTransfer.files[0]); }}
+      onClick={() => inputRef.current && inputRef.current.click()}
+      className="relative w-32 h-24 rounded-2xl flex items-center justify-center cursor-pointer transition-colors shrink-0"
+      style={{ border: `2px dashed ${over ? "var(--accent)" : "var(--line)"}`, background: over ? "var(--accent-soft)" : "var(--surface-2)" }}
+      role="button" aria-label="Add your logo">
+      {logo ? (
+        <>
+          <img src={logo} alt="Your logo" className="max-w-full max-h-full object-contain p-2 rounded-2xl" />
+          <button onClick={e => { e.stopPropagation(); onLogo(null); }} aria-label="Remove logo"
+            className="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center"
+            style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+            <X className="w-3 h-3" style={{ color: "var(--muted)" }} />
+          </button>
+        </>
+      ) : (
+        <div className="text-center px-2">
+          <Upload className="w-4 h-4 mx-auto mb-1" style={{ color: "var(--muted)" }} />
+          <div className="text-[11px] leading-tight" style={{ color: "var(--muted)" }}>Drop your logo here</div>
+        </div>
+      )}
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={e => handle(e.target.files[0])} />
+    </div>
+  );
+}
+
+function QuoteEditor({ quote: q, update, remove, onBack, projects }) {
+  const project = projects.find(p => p.id === q.projectId);
+  const set = (patch) => update({ ...q, ...patch });
+  const subtotal = quoteSubtotal(q);
+  const total = quoteTotal(q);
+  const sstAmount = total - subtotal;
+
+  const isBlankItem = (it) => !it.title && !it.details && !it.unit;
+  const [openItem, setOpenItem] = useState(() => (q.items.length === 1 && isBlankItem(q.items[0]) ? 0 : null));
+  const [previewing, setPreviewing] = useState(false);
+  const [openTerms, setOpenTerms] = useState(() => !q.paymentTerms);
+  const bankFilled = (b) => b.name.trim() && b.account.trim() && b.holder.trim();
+  const [openBank, setOpenBank] = useState(() => !bankFilled(q.bank));
+
+  const setItem = (i, patch) => set({ items: q.items.map((it, j) => j === i ? { ...it, ...patch } : it) });
+  const addItem = () => {
+    const items = [...q.items, { title: "", details: "", qty: 1, unit: 0 }];
+    set({ items });
+    setOpenItem(items.length - 1);
+  };
+  const removeItem = (i) => { set({ items: q.items.filter((_, j) => j !== i) }); setOpenItem(null); };
+  const tagProject = (pid) => {
+    const p = projects.find(x => x.id === pid);
+    set({ projectId: pid || null, client: q.client || (p ? p.client : ""), title: q.title || (p ? p.name : "") });
+  };
+  const setConsolidatedAmount = (v) => {
+    const unit = Number(v) || 0;
+    if (q.items.length === 0) set({ items: [{ title: q.consolidatedLabel || "Project fee", details: "", qty: 1, unit }] });
+    else set({ items: [{ ...q.items[0], qty: 1, unit }, ...q.items.slice(1).map(it => ({ ...it, qty: 0 }))] });
+  };
+
+  const printOnMount = useRef(false);
+  useEffect(() => {
+    if (previewing && printOnMount.current) {
+      printOnMount.current = false;
+      const t = setTimeout(() => window.print(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [previewing]);
+
+  const downloadQuote = () => {
+    if (previewing) { window.print(); return; }
+    printOnMount.current = true;
+    setPreviewing(true);
+  };
+
+  if (previewing) {
+    return (
+      <div className="fade max-w-3xl">
+        <button onClick={() => setPreviewing(false)} className="mono text-[11px] uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
+          <ArrowLeft className="w-3 h-3" /> Back to edit
+        </button>
+        <Card className="p-6 md:p-10 pr-print-area">
+          <div className="flex items-start justify-between gap-4 mb-8">
+            <div className="min-w-0">
+              {q.logo && <img src={q.logo} alt="Logo" className="h-12 mb-4 object-contain" />}
+              <div className="display text-2xl md:text-3xl font-semibold tracking-tight">{q.title || "Untitled quotation"}</div>
+              <div className="text-sm mt-1" style={{ color: "var(--muted)" }}>{q.client || "—"}</div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="mono text-xs" style={{ color: "var(--muted)" }}>{q.number}</div>
+              <div className="mono text-xs mt-0.5" style={{ color: "var(--muted)" }}>{q.created}</div>
+              <div className="mt-2"><StatusTag s={q.status} /></div>
+            </div>
+          </div>
+
+          {q.mode === "itemised" ? (
+            <div className="space-y-4 mb-6">
+              {q.items.map((it, i) => (
+                <div key={i} className="flex justify-between items-start gap-4 pb-4" style={{ borderBottom: "1px solid var(--line)" }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">{it.title || "Untitled"}</div>
+                    {it.details && <div className="text-xs mt-1 whitespace-pre-line leading-relaxed" style={{ color: "var(--muted)" }}>{it.details}</div>}
+                  </div>
+                  <div className="mono text-xs shrink-0 pt-0.5" style={{ color: "var(--muted)" }}>{it.qty || 0} × {money(it.unit || 0)}</div>
+                  <div className="mono text-sm shrink-0 w-24 text-right">{money((it.qty || 0) * (it.unit || 0))}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex justify-between items-center pb-4 mb-6" style={{ borderBottom: "1px solid var(--line)" }}>
+              <div className="text-sm font-medium">{q.consolidatedLabel || "Project fee"}</div>
+              <div className="mono text-sm">{money(subtotal)}</div>
+            </div>
+          )}
+
+          <div className="space-y-2 mb-8 max-w-xs ml-auto">
+            <div className="flex justify-between text-sm"><span style={{ color: "var(--muted)" }}>Subtotal</span><span className="mono">{money(subtotal)}</span></div>
+            {q.sst > 0 && <div className="flex justify-between text-sm"><span style={{ color: "var(--muted)" }}>SST {q.sst}%</span><span className="mono">{money(sstAmount)}</span></div>}
+            <div className="flex justify-between pt-2 border-t" style={{ borderColor: "var(--line)" }}>
+              <span className="font-semibold">Total</span><span className="display text-xl font-semibold">{money(total)}</span>
+            </div>
+          </div>
+
+          <div>
+            <SectionLabel>Payment</SectionLabel>
+            {q.paymentTerms && <div className="text-sm mb-2" style={{ color: "var(--muted)" }}>{q.paymentTerms}</div>}
+            <div className="text-sm">{q.paymentMethod}</div>
+            <div className="text-sm" style={{ color: "var(--muted)" }}>{q.bank.name || "—"} · {q.bank.account || "—"} · {q.bank.holder || "—"}</div>
+          </div>
+        </Card>
+        <div className="flex items-center gap-2 mt-5">
+          <Btn onClick={downloadQuote}><Download className="w-4 h-4" /> Download PDF</Btn>
+          <Btn variant="secondary" onClick={() => setPreviewing(false)}>Back to edit</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fade max-w-3xl">
+      <button onClick={onBack} className="mono text-[11px] uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
+        <ArrowLeft className="w-3 h-3" /> Quotations
+      </button>
+
+      <div className="flex gap-4 items-start mb-4">
+        <LogoDrop logo={q.logo} onLogo={(logo) => set({ logo })} />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-3 mb-1">
+            <span className="mono text-sm" style={{ color: "var(--muted)" }}>{q.number}</span>
+            <StatusTag s={q.status} />
+          </div>
+          <input type="text" value={q.title} onChange={e => set({ title: e.target.value })} placeholder="Quotation title"
+            className="display w-full text-2xl md:text-3xl font-semibold tracking-tight bg-transparent border-0 px-0 py-1" style={{ boxShadow: "none" }} />
+          <input type="text" value={q.client} onChange={e => set({ client: e.target.value })} placeholder="Client or company name"
+            className="w-full text-sm bg-transparent border-0 px-0" style={{ boxShadow: "none", color: "var(--muted)" }} />
+        </div>
+      </div>
+
+      {/* Tag to a project */}
+      <div className="flex items-center gap-3 mb-5">
+        <SectionLabel>Tag to a brief</SectionLabel>
+        <select value={q.projectId || ""} onChange={e => tagProject(e.target.value)}
+          className="rounded-xl px-3 py-2 text-sm" style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--ink)" }}>
+          <option value="">Not tagged</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {project && <Tag tone="accent">Grouped with {project.client}</Tag>}
+      </div>
+
+      {/* Billing */}
+      <Card className="p-5 md:p-6">
+        <div className="flex items-center justify-between mb-5">
+          <SectionLabel>Billing</SectionLabel>
+          <div className="flex rounded-xl p-0.5" style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+            {[["itemised", "Itemised"], ["consolidated", "One total"]].map(([m, label]) => (
+              <button key={m} onClick={() => set({ mode: m })}
+                className="px-3.5 py-1.5 rounded-[10px] text-xs font-medium transition-all"
+                style={q.mode === m ? { background: "var(--surface)", boxShadow: "var(--shadow)", color: "var(--ink)" } : { color: "var(--muted)" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {q.mode === "itemised" ? (
+          <>
+            <div className="space-y-2.5">
+              {q.items.map((it, i) => (
+                openItem === i ? (
+                  <div key={i} className="rounded-2xl p-4 rise" style={{ background: "var(--surface-2)", border: "1px solid var(--accent)" }}
+                    onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget) && it.title.trim()) setOpenItem(null); }}>
+                    <div className="flex gap-2 items-center mb-2.5">
+                      <input type="text" value={it.title} onChange={e => setItem(i, { title: e.target.value })} autoFocus
+                        placeholder="Field — e.g. Social media content" className="flex-1 rounded-xl px-4 py-3 text-sm font-medium min-w-0" />
+                      <button onClick={() => setOpenItem(null)} aria-label="Collapse field" className="p-2 shrink-0">
+                        <ChevronRight className="w-4 h-4" style={{ color: "var(--muted)", transform: "rotate(90deg)" }} />
+                      </button>
+                      <button onClick={() => removeItem(i)} aria-label="Remove item" className="p-2 shrink-0"><Trash2 className="w-4 h-4" style={{ color: "var(--muted)" }} /></button>
+                    </div>
+                    <textarea rows={2} value={it.details} onChange={e => setItem(i, { details: e.target.value })}
+                      placeholder={"Items — one per line, shown as bullets:\n10x carousels (up to 5 frames)\n5x videos"}
+                      className="w-full rounded-xl px-4 py-3 text-sm leading-relaxed resize-none mb-2.5" />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center rounded-xl px-3" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                        <span className="mono text-[11px] mr-2" style={{ color: "var(--muted)" }}>QTY</span>
+                        <input type="number" min="0" value={it.qty || ""} onChange={e => setItem(i, { qty: Number(e.target.value) })}
+                          placeholder="1" className="w-14 py-2.5 text-sm mono bg-transparent border-0 text-right" style={{ boxShadow: "none" }} />
+                      </div>
+                      <span className="mono text-xs" style={{ color: "var(--muted)" }}>×</span>
+                      <div className="flex items-center rounded-xl px-3" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                        <span className="mono text-[11px] mr-2" style={{ color: "var(--muted)" }}>RM</span>
+                        <input type="number" min="0" value={it.unit || ""} onChange={e => setItem(i, { unit: Number(e.target.value) })}
+                          placeholder="0" className="w-24 py-2.5 text-sm mono bg-transparent border-0 text-right" style={{ boxShadow: "none" }} />
+                        <span className="mono text-[11px] ml-2" style={{ color: "var(--muted)" }}>/ unit</span>
+                      </div>
+                      <span className="mono text-sm ml-auto">{money((Number(it.qty) || 0) * (Number(it.unit) || 0))}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={i} role="button" tabIndex={0} onClick={() => setOpenItem(i)}
+                    onKeyDown={e => { if (e.key === "Enter") setOpenItem(i); }}
+                    className="rounded-2xl p-4 flex items-center gap-3 cursor-pointer transition-colors hover:opacity-90"
+                    style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{it.title || "Untitled field"}</div>
+                      {it.details && <div className="text-xs truncate mt-0.5" style={{ color: "var(--muted)" }}>{it.details.split("\n")[0]}</div>}
+                    </div>
+                    <span className="mono text-xs shrink-0" style={{ color: "var(--muted)" }}>{it.qty || 0} × {money(it.unit || 0)}</span>
+                    <span className="mono text-sm shrink-0 w-20 text-right">{money((Number(it.qty) || 0) * (Number(it.unit) || 0))}</span>
+                    <span role="button" aria-label="Remove item" onClick={e => { e.stopPropagation(); removeItem(i); }} className="p-1 shrink-0">
+                      <Trash2 className="w-3.5 h-3.5" style={{ color: "var(--muted)" }} />
+                    </span>
+                    <PenLine className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+                  </div>
+                )
+              ))}
+            </div>
+            <button onClick={addItem} className="mt-4 inline-flex items-center gap-2 text-sm font-medium" style={{ color: "var(--accent)" }}>
+              <Plus className="w-4 h-4" /> Add billing field
+            </button>
+          </>
+        ) : (
+          <>
+            <input type="text" value={q.consolidatedLabel} onChange={e => set({ consolidatedLabel: e.target.value })}
+              placeholder="What the client sees — e.g. Complete brand refresh package" className="w-full rounded-xl px-4 py-3 text-sm mb-3" />
+            {q.items.filter(it => (it.qty || 0) * (it.unit || 0) > 0).length <= 1 ? (
+              <div className="flex items-center rounded-xl px-3 w-44" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                <span className="mono text-xs mr-1" style={{ color: "var(--muted)" }}>RM</span>
+                <input type="number" min="0" value={q.items[0] ? q.items[0].unit || "" : ""} onChange={e => setConsolidatedAmount(e.target.value)}
+                  placeholder="0" className="flex-1 py-3 text-sm mono bg-transparent border-0 text-right" style={{ boxShadow: "none" }} />
+              </div>
+            ) : (
+              <p className="text-sm" style={{ color: "var(--muted)" }}>Total rolls up from your {q.items.length} billing fields — they stay saved, the client just sees one line. Switch to Itemised to edit them.</p>
+            )}
+          </>
+        )}
+
+        {/* Totals + SST */}
+        <div className="mt-6 pt-5 border-t space-y-2" style={{ borderColor: "var(--line)" }}>
+          <div className="flex justify-between items-center text-sm">
+            <span style={{ color: "var(--muted)" }}>Subtotal</span>
+            <span className="mono">{money(subtotal)}</span>
+          </div>
+          <div className="flex justify-between items-center text-sm">
+            <span className="flex items-center gap-2" style={{ color: "var(--muted)" }}>
+              SST
+              <select value={q.sst || 0} onChange={e => set({ sst: Number(e.target.value) })}
+                className="rounded-lg px-2 py-1 text-xs" style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--ink)" }}>
+                <option value={0}>None</option>
+                <option value={6}>6%</option>
+                <option value={9}>9%</option>
+              </select>
+            </span>
+            <span className="mono">{q.sst ? money(sstAmount) : "—"}</span>
+          </div>
+          <div className="flex justify-between items-center pt-2">
+            <span className="font-semibold">Total</span>
+            <span className="display text-2xl font-semibold">{money(total)}</span>
+          </div>
+        </div>
+      </Card>
+
+      {/* Payment details */}
+      <Card className="p-5 md:p-6 mt-4">
+        <SectionLabel>Payment</SectionLabel>
+
+        <div className="mt-2">
+          {openTerms ? (
+            <textarea rows={2} value={q.paymentTerms} onChange={e => set({ paymentTerms: e.target.value })} autoFocus
+              onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget) && q.paymentTerms.trim()) setOpenTerms(false); }}
+              placeholder="Payment terms — e.g. 50% deposit to start, balance on delivery"
+              className="w-full rounded-xl px-4 py-3 text-sm leading-relaxed resize-none" />
+          ) : (
+            <div role="button" tabIndex={0} onClick={() => setOpenTerms(true)}
+              onKeyDown={e => { if (e.key === "Enter") setOpenTerms(true); }}
+              className="rounded-xl px-4 py-3 text-sm flex items-center gap-2 cursor-pointer transition-colors hover:opacity-90"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+              <span className="flex-1 truncate" style={{ color: q.paymentTerms ? "var(--ink)" : "var(--muted)" }}>{q.paymentTerms || "Add payment terms"}</span>
+              <PenLine className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3">
+          {openBank ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5"
+              onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget) && bankFilled(q.bank)) setOpenBank(false); }}>
+              <select value={q.paymentMethod} onChange={e => set({ paymentMethod: e.target.value })}
+                className="rounded-xl px-4 py-3 text-sm" style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--ink)" }}>
+                {["Bank transfer", "DuitNow", "Cheque", "Cash"].map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <input type="text" value={q.bank.name} onChange={e => set({ bank: { ...q.bank, name: e.target.value } })} placeholder="Bank name — e.g. Maybank" className="rounded-xl px-4 py-3 text-sm" />
+              <input type="text" value={q.bank.account} onChange={e => set({ bank: { ...q.bank, account: e.target.value } })} placeholder="Account number" className="rounded-xl px-4 py-3 text-sm" />
+              <input type="text" value={q.bank.holder} onChange={e => set({ bank: { ...q.bank, holder: e.target.value } })} placeholder="Account holder name" className="rounded-xl px-4 py-3 text-sm" />
+            </div>
+          ) : (
+            <div role="button" tabIndex={0} onClick={() => setOpenBank(true)}
+              onKeyDown={e => { if (e.key === "Enter") setOpenBank(true); }}
+              className="rounded-xl px-4 py-3 text-sm flex items-center gap-2 cursor-pointer transition-colors hover:opacity-90"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+              <span className="flex-1 truncate">{q.paymentMethod} · {q.bank.name || "—"} · {q.bank.account || "—"} · {q.bank.holder || "—"}</span>
+              <PenLine className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <div className="flex flex-wrap items-center gap-2 mt-5">
+        {q.status === "Draft" && <Btn onClick={() => set({ status: "Sent" })} disabled={!total}><Send className="w-4 h-4" /> Send to client</Btn>}
+        {q.status === "Sent" && <Btn onClick={() => set({ status: "Accepted" })}><Check className="w-4 h-4" /> Mark accepted</Btn>}
+        <Btn variant="secondary" onClick={() => setPreviewing(true)}><Eye className="w-4 h-4" /> Preview</Btn>
+        <Btn variant="secondary" onClick={downloadQuote}><Download className="w-4 h-4" /> Download PDF</Btn>
+        <button onClick={() => remove(q.id)} className="inline-flex items-center gap-1.5 text-sm ml-auto" style={{ color: "var(--muted)" }}>
+          <Trash2 className="w-3.5 h-3.5" /> Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PaymentsPage() {
+  return (
+    <div className="fade">
+      <PageTitle title="Payments" sub="Coming soon — the data model is ready for it." />
+      <div className="grid md:grid-cols-3 gap-4">
+        {[["Payment links", "Send a link with any invoice and get paid by card or bank transfer."],
+          ["Milestone payments", "Split a project into stages, each with its own release."],
+          ["Instalments", "Let clients pay larger projects across scheduled dates."]].map(([t, d]) => (
+          <Card key={t} className="p-5" style={{ background: "var(--surface-2)" }}>
+            <Tag tone="accent">Planned</Tag>
+            <div className="font-semibold mt-3 mb-1.5">{t}</div>
+            <div className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{d}</div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SettingsPage({ dark, setDark, wsName, setWsName }) {
+  const [name, setName] = useState(wsName);
+  const [savedName, setSavedName] = useState(false);
+  const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
+  const [pwNote, setPwNote] = useState("");
+
+  const saveName = () => {
+    setWsName(name.trim() || wsName);
+    setSavedName(true); setTimeout(() => setSavedName(false), 1800);
+  };
+  const savePw = () => {
+    if (!pw.current || !pw.next) { setPwNote("Fill in your current and new password."); return; }
+    if (pw.next.length < 8) { setPwNote("New password needs at least 8 characters."); return; }
+    if (pw.next !== pw.confirm) { setPwNote("New passwords don't match."); return; }
+    setPw({ current: "", next: "", confirm: "" });
+    setPwNote("done");
+  };
+
+  return (
+    <div className="fade max-w-lg">
+      <PageTitle title="Settings" />
+      <div className="space-y-3">
+        <Card className="p-5">
+          <div className="font-medium mb-1">Workspace name</div>
+          <div className="text-sm mb-4" style={{ color: "var(--muted)" }}>Shown to clients on your intake links.</div>
+          <div className="flex gap-2">
+            <input type="text" value={name} onChange={e => setName(e.target.value)} className="flex-1 rounded-xl px-4 py-3 text-sm" />
+            <Btn onClick={saveName} className="px-4 py-2 text-xs">{savedName ? <><Check className="w-3.5 h-3.5" /> Saved</> : "Save changes"}</Btn>
+          </div>
+        </Card>
+
+        <Card className="p-5 flex items-center justify-between">
+          <div>
+            <div className="font-medium">Dark mode</div>
+            <div className="text-sm" style={{ color: "var(--muted)" }}>Applies across the app and intake links.</div>
+          </div>
+          <button onClick={() => setDark(!dark)} className="relative w-12 h-7 rounded-full transition-colors" style={{ background: dark ? "var(--accent)" : "var(--line)" }} aria-label="Toggle dark mode">
+            <span className="absolute top-1 w-5 h-5 rounded-full transition-all" style={{ background: "var(--surface)", left: dark ? "26px" : "4px", boxShadow: "var(--shadow)" }} />
+          </button>
+        </Card>
+
+        <Card className="p-5">
+          <div className="font-medium mb-1">Change password</div>
+          <div className="text-sm mb-4" style={{ color: "var(--muted)" }}>At least 8 characters. In production this runs through Supabase Auth.</div>
+          <div className="space-y-2.5">
+            <input type="password" value={pw.current} onChange={e => { setPw({ ...pw, current: e.target.value }); setPwNote(""); }} placeholder="Current password" className="w-full rounded-xl px-4 py-3 text-sm" />
+            <input type="password" value={pw.next} onChange={e => { setPw({ ...pw, next: e.target.value }); setPwNote(""); }} placeholder="New password" className="w-full rounded-xl px-4 py-3 text-sm" />
+            <input type="password" value={pw.confirm} onChange={e => { setPw({ ...pw, confirm: e.target.value }); setPwNote(""); }} placeholder="Confirm new password" className="w-full rounded-xl px-4 py-3 text-sm" />
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <Btn onClick={savePw} className="px-4 py-2 text-xs">Update password</Btn>
+            {pwNote === "done"
+              ? <span className="text-sm flex items-center gap-1.5" style={{ color: "var(--good)" }}><Check className="w-3.5 h-3.5" /> Password updated</span>
+              : pwNote && <span className="text-sm" style={{ color: "var(--warn)" }}>{pwNote}</span>}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Root                                                                */
+/* ------------------------------------------------------------------ */
+
+export default function App() {
+  const [view, setView] = useState("landing"); // landing | app | intake
+  const [intakeReturn, setIntakeReturn] = useState("landing");
+  const startIntake = (from) => { setIntakeReturn(from); setView("intake"); };
+  const [dark, setDark] = useState(false);
+  const [projects, setProjects] = useState(seedProjects);
+  const [quotes, setQuotes] = useState(seedQuotes);
+
+  const handleIntakeDone = (brief, payload) => {
+    // In production this writes to Supabase; here it lands in local state.
+    setProjects(ps => ps.map(p => p.id === "p2" ? {
+      ...p, briefComplete: true, status: "Brief received", brief,
+      budget: payload.budget, timelineWeeks: payload.timelineWeeks,
+      activity: [{ t: "6 Jul", e: "AI brief generated and structured" }, { t: "6 Jul", e: `Client completed intake (${payload.name || "client"})` }, ...p.activity],
+    } : p));
+  };
+
+  return (
+    <div data-app="prelima" data-theme={dark ? "dark" : "light"} className="min-h-screen antialiased" style={{ background: "var(--bg)" }}>
+      <ThemeStyles />
+      {view === "landing" && <Landing onStart={() => startIntake("landing")} onSignIn={() => setView("app")} dark={dark} setDark={setDark} />}
+      {view === "app" && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} onLogout={() => setView("landing")} onPreviewIntake={() => startIntake("app")} dark={dark} setDark={setDark} />}
+      {view === "intake" && <IntakeFlow projectName="Website copy — Northwind Legal" freelancer="BETA Studio" onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
+    </div>
+  );
+}
