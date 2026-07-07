@@ -5,8 +5,10 @@ import {
   Plus, Globe, Upload, ChevronRight, Clock, CircleDollarSign, X, Loader2,
   CheckCircle2, AlertTriangle, HelpCircle, Search, MoreHorizontal, Send,
   FileStack, Wallet, Activity, Paperclip, ExternalLink, PenLine, Mic, Square,
-  Undo2, Download, Image, Trash2, Eye
+  Undo2, Download, Image, Trash2, Eye, Mail, Lock, AlertCircle
 } from "lucide-react";
+import { supabase, supabaseConfigured } from "./supabaseClient.js";
+import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, ensureProfile, saveWorkspaceName } from "./db.js";
 
 /* ------------------------------------------------------------------ */
 /* Theme                                                               */
@@ -121,107 +123,6 @@ function parseJSON(text) {
 }
 
 const downloadBrief = () => window.print();
-
-/* ------------------------------------------------------------------ */
-/* Seed data                                                           */
-/* ------------------------------------------------------------------ */
-
-const seedProjects = [
-  {
-    id: "p1", name: "Brand refresh — Havana Coffee Co.", client: "Havana Coffee Co.",
-    status: "Brief received", created: "28 Jun 2026", budget: 8500, timelineWeeks: 6,
-    link: "prelima.app/b/hvn-4c2f", briefComplete: true,
-    brief: {
-      professionalBrief:
-`Havana Coffee Co. is a specialty roaster with three cafés in Kuala Lumpur, positioned around direct-trade sourcing and a warm, neighbourhood feel. The current identity dates from their 2019 launch and no longer reflects the maturity of the brand or its packaging range.
-
-The project covers a full brand refresh: revised logotype, colour and typography system, packaging templates for three bean lines, and a compact brand guideline document. The primary objective is to support a retail push into grocery and online channels without alienating café regulars.
-
-The audience is urban professionals aged 25–40 who buy whole beans for home brewing and value provenance. Tone should feel crafted and confident, not artisanal-cliché.
-
-Deliverables: logotype refinement, brand guidelines (PDF), packaging system (3 SKUs), social launch kit. Timeline: 6 weeks from kickoff. Budget: RM8,500 fixed, with a preference for two structured revision rounds.`,
-      missingInfo: ["Print vendor specs for packaging dielines", "Existing brand asset files (source formats)"],
-      followUpQuestions: ["Should the café signage be updated within this scope, or is it a later phase?", "Is there a hard launch date tied to the grocery listing?"],
-      unclearRequirements: ["\"Keep the vibe but modernise\" — needs concrete references of what to preserve"],
-      scopeGaps: ["Photography/art direction is implied by the packaging ask but not scoped or budgeted"],
-    },
-    activity: [
-      { t: "2 Jul", e: "AI brief generated and structured" },
-      { t: "2 Jul", e: "Client completed intake (14 of 14 steps)" },
-      { t: "28 Jun", e: "Intake link sent to marissa@havanacoffee.co" },
-      { t: "28 Jun", e: "Project created" },
-    ],
-    files: [
-      { name: "current-logo.ai", size: "2.1 MB" },
-      { name: "packaging-photos.zip", size: "18.4 MB" },
-      { name: "moodboard-refs.pdf", size: "5.7 MB" },
-    ],
-    invoice: { number: "INV-2026-009", amount: 4250, due: "15 Jul 2026", status: "Awaiting payment", note: "50% deposit" },
-  },
-  {
-    id: "p2", name: "Website copy — Northwind Legal", client: "Northwind Legal LLP",
-    status: "Awaiting brief", created: "3 Jul 2026", budget: null, timelineWeeks: null,
-    link: "prelima.app/b/nwl-9a1d", briefComplete: false,
-    brief: null,
-    activity: [
-      { t: "4 Jul", e: "Client opened intake link (step 3 of 14, autosaved)" },
-      { t: "3 Jul", e: "Intake link sent to d.tan@northwindlegal.com" },
-      { t: "3 Jul", e: "Project created" },
-    ],
-    files: [], quote: null, invoice: null,
-  },
-  {
-    id: "p3", name: "Launch campaign — Solace Yoga", client: "Solace Yoga Studio",
-    status: "Quoted", created: "18 Jun 2026", budget: 4200, timelineWeeks: 4,
-    link: "prelima.app/b/sly-7e3b", briefComplete: true,
-    brief: {
-      professionalBrief:
-`Solace Yoga is opening a second studio in Bangsar and needs a four-week social launch campaign across Instagram and TikTok, driving trial-class bookings ahead of the 1 August opening.
-
-Deliverables: campaign concept, 12 feed posts, 8 short-form videos (edited from supplied footage), and a founder-story carousel. Audience: women 24–38 within 5km, currently practising at gyms rather than dedicated studios. Budget: RM4,200. The client has confirmed all footage will be supplied by 10 July.`,
-      missingInfo: ["Booking platform link for CTA tracking"],
-      followUpQuestions: ["Is paid amplification handled in-house or excluded entirely?"],
-      unclearRequirements: [],
-      scopeGaps: ["Community management during launch week is not scoped"],
-    },
-    activity: [
-      { t: "26 Jun", e: "Quotation Q-2026-013 sent" },
-      { t: "24 Jun", e: "AI brief generated and structured" },
-      { t: "18 Jun", e: "Project created" },
-    ],
-    files: [{ name: "studio-footage-selects.mp4", size: "412 MB" }],
-    invoice: null,
-  },
-];
-
-const seedQuotes = [
-  {
-    id: "q1", number: "Q-2026-014", projectId: "p1", client: "Havana Coffee Co.",
-    title: "Brand refresh — Havana Coffee Co.", mode: "itemised",
-    consolidatedLabel: "Complete brand refresh package", status: "Sent", created: "2 Jul 2026",
-    sst: 6, logo: null, paymentMethod: "Bank transfer", paymentTerms: "50% deposit to start, balance on delivery.",
-    bank: { name: "Maybank", account: "5123 4567 8901", holder: "BETA Studio" },
-    items: [
-      { title: "Brand strategy & logotype", details: "Discovery workshop\nLogotype refinement\n2 revision rounds", qty: 1, unit: 3200 },
-      { title: "Packaging design", details: "Front & back artwork per SKU\nPrint-ready dielines", qty: 3, unit: 1100 },
-      { title: "Brand guidelines document", details: "Compact PDF guide\nUsage rules & type system", qty: 1, unit: 1200 },
-      { title: "Social launch kit", details: "9x feed posts\n6x stories", qty: 1, unit: 700 },
-    ],
-  },
-  {
-    id: "q2", number: "Q-2026-013", projectId: "p3", client: "Solace Yoga Studio",
-    title: "Launch campaign — Solace Yoga", mode: "itemised",
-    consolidatedLabel: "Studio launch campaign — all deliverables", status: "Accepted", created: "26 Jun 2026",
-    sst: 0, logo: null, paymentMethod: "DuitNow", paymentTerms: "Full payment on acceptance of this quotation.",
-    bank: { name: "CIMB", account: "8001 2345 6789", holder: "BETA Studio" },
-    items: [
-      { title: "Campaign concept & content plan", details: "Concept deck\n4-week content calendar", qty: 1, unit: 900 },
-      { title: "Social media content", details: "Feed posts (design + copy)", qty: 12, unit: 125 },
-      { title: "Short-form video edits", details: "Edited from supplied footage\nUp to 30s each", qty: 8, unit: 200 },
-      { title: "Founder story carousel", details: "Up to 8 frames", qty: 1, unit: 200 },
-    ],
-  },
-];
 
 /* ------------------------------------------------------------------ */
 /* Atoms                                                               */
@@ -389,7 +290,7 @@ const VoiceTA = ({ value, onChange, placeholder, rows = 5, cleanHint }) => {
   );
 };
 
-function IntakeFlow({ projectName = "Brand refresh", freelancer = "BETA Studio", onDone, onExit }) {
+function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onDone, onExit }) {
   const [step, setStep] = useState(-1);
   const [a, setA] = useState(blankAnswers);
   const [saved, setSaved] = useState(true);
@@ -859,13 +760,12 @@ function StatusTag({ s }) {
   return <Tag tone={tone}>{s}</Tag>;
 }
 
-function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPreviewIntake, dark, setDark }) {
+function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPreviewIntake, dark, setDark, wsName, setWsName }) {
   const [page, setPage] = useState("dashboard");
   const [openProject, setOpenProject] = useState(null);
   const [copied, setCopied] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
-  const [wsName, setWsName] = useState("BETA Studio");
   const [openQuote, setOpenQuote] = useState(null);
 
   const createQuote = (projectId) => {
@@ -941,7 +841,7 @@ function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPrevie
 
         <main className="p-5 md:p-8 max-w-5xl">
           {project ? (
-            <ProjectDetail project={project} quotes={quotes} onBack={() => setOpenProject(null)} copy={copy} copied={copied} onPreviewIntake={onPreviewIntake} onCreateQuote={createQuote} onOpenQuote={(id) => { setPage("quotations"); setOpenProject(null); setOpenQuote(id); }} />
+            <ProjectDetail project={project} quotes={quotes} onBack={() => setOpenProject(null)} copy={copy} copied={copied} onPreviewIntake={() => onPreviewIntake(project.name)} onCreateQuote={createQuote} onOpenQuote={(id) => { setPage("quotations"); setOpenProject(null); setOpenQuote(id); }} />
           ) : page === "dashboard" ? (
             <DashboardHome projects={projects} quotes={quotes} open={setOpenProject} />
           ) : page === "quotations" ? (
@@ -1000,6 +900,9 @@ function DashboardHome({ projects, quotes, open }) {
       </div>
 
       <SectionLabel>Projects</SectionLabel>
+      {projects.length === 0 ? (
+        <EmptyState icon={FolderKanban} title="No projects yet" body="Create your first project to generate a client intake link." />
+      ) : (
       <Card className="overflow-hidden">
         <div className="hidden md:grid grid-cols-12 gap-3 px-5 py-3 mono text-[11px] uppercase tracking-wider border-b"
           style={{ color: "var(--muted)", borderColor: "var(--line)" }}>
@@ -1030,6 +933,7 @@ function DashboardHome({ projects, quotes, open }) {
           </button>
         ))}
       </Card>
+      )}
       <p className="mono text-[11px] mt-3" style={{ color: "var(--muted)" }}>
         Value = quotation total when quoted, otherwise the client's budget from the brief. Pipeline adds standalone sent quotes and excludes paid projects.
       </p>
@@ -1710,32 +1614,180 @@ function SettingsPage({ dark, setDark, wsName, setWsName }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Auth                                                                */
+/* ------------------------------------------------------------------ */
+
+function AuthScreen({ onDone, onBack, dark, setDark }) {
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+
+  const submit = async () => {
+    if (!email.trim() || !password) { setError("Enter your email and password."); return; }
+    setBusy(true); setError(""); setNote("");
+    try {
+      if (mode === "signup") {
+        const { data, error: err } = await supabase.auth.signUp({ email: email.trim(), password });
+        if (err) throw err;
+        if (data.session) { onDone(); return; }
+        setNote("Check your email to confirm your account, then sign in.");
+        setMode("signin");
+      } else {
+        const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (err) throw err;
+        onDone();
+      }
+    } catch (err) {
+      setError(err.message || "Something went wrong.");
+    }
+    setBusy(false);
+  };
+
+  if (!supabaseConfigured) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-5" style={{ background: "var(--bg)" }}>
+        <Card className="max-w-sm p-6 text-center">
+          <AlertCircle className="w-6 h-6 mx-auto mb-3" style={{ color: "var(--warn)" }} />
+          <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>Accounts aren't set up yet — the app isn't connected to a database in this environment.</p>
+          <Btn variant="secondary" onClick={onBack}>Back</Btn>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
+      <header className="flex items-center justify-between px-5 md:px-12 py-5 max-w-5xl mx-auto w-full">
+        <button onClick={onBack}><Wordmark /></button>
+        <button onClick={() => setDark(!dark)} aria-label="Toggle dark mode" className="p-2 rounded-lg" style={{ color: "var(--muted)" }}>
+          {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
+      </header>
+      <main className="flex-1 flex items-center justify-center px-5 py-12">
+        <Card className="w-full max-w-sm p-6 md:p-8 fade">
+          <h1 className="display text-2xl font-semibold mb-1">{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
+          <p className="text-sm mb-6" style={{ color: "var(--muted)" }}>
+            {mode === "signup" ? "Free while in beta — no card required." : "Sign in to your workspace."}
+          </p>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 rounded-xl px-4" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+              <Mail className="w-4 h-4 shrink-0" style={{ color: "var(--muted)" }} />
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@studio.com"
+                className="flex-1 py-3 text-sm bg-transparent border-0" style={{ boxShadow: "none" }} autoFocus />
+            </div>
+            <div className="flex items-center gap-2 rounded-xl px-4" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+              <Lock className="w-4 h-4 shrink-0" style={{ color: "var(--muted)" }} />
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
+                onKeyDown={e => { if (e.key === "Enter") submit(); }}
+                className="flex-1 py-3 text-sm bg-transparent border-0" style={{ boxShadow: "none" }} />
+            </div>
+          </div>
+          {error && <p className="text-sm mt-3 flex items-start gap-2" style={{ color: "var(--warn)" }}><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {error}</p>}
+          {note && <p className="text-sm mt-3" style={{ color: "var(--good)" }}>{note}</p>}
+          <Btn onClick={submit} disabled={busy} className="w-full mt-5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {mode === "signup" ? "Create account" : "Sign in"}
+          </Btn>
+          <button onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setError(""); setNote(""); }}
+            className="text-sm mt-4 underline underline-offset-4 block mx-auto" style={{ color: "var(--muted)" }}>
+            {mode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
+          </button>
+        </Card>
+      </main>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Root                                                                */
 /* ------------------------------------------------------------------ */
 
 export default function App() {
-  const [view, setView] = useState("landing"); // landing | app | intake
+  const [view, setView] = useState("landing"); // landing | auth | app | intake
   const [intakeReturn, setIntakeReturn] = useState("landing");
-  const startIntake = (from) => { setIntakeReturn(from); setView("intake"); };
+  const [previewProjectName, setPreviewProjectName] = useState("New project");
+  const startIntake = (from, name) => { setIntakeReturn(from); if (name) setPreviewProjectName(name); setView("intake"); };
   const [dark, setDark] = useState(false);
-  const [projects, setProjects] = useState(seedProjects);
-  const [quotes, setQuotes] = useState(seedQuotes);
 
-  const handleIntakeDone = (brief, payload) => {
-    // In production this writes to Supabase; here it lands in local state.
-    setProjects(ps => ps.map(p => p.id === "p2" ? {
-      ...p, briefComplete: true, status: "Brief received", brief,
-      budget: payload.budget, timelineWeeks: payload.timelineWeeks,
-      activity: [{ t: "6 Jul", e: "AI brief generated and structured" }, { t: "6 Jul", e: `Client completed intake (${payload.name || "client"})` }, ...p.activity],
-    } : p));
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [projects, setProjects] = useState([]);
+  const [quotes, setQuotes] = useState([]);
+  const [wsName, setWsName] = useState("My Studio");
+  const loadedRef = useRef(false);
+
+  useEffect(() => {
+    if (!supabaseConfigured) { setAuthLoading(false); return; }
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthLoading(false); });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) { loadedRef.current = false; setProjects([]); setQuotes([]); return; }
+    let cancelled = false;
+    loadedRef.current = false;
+    (async () => {
+      try {
+        const [p, q, name] = await Promise.all([
+          fetchProjects(session.user.id),
+          fetchQuotes(session.user.id),
+          ensureProfile(session.user.id, "My Studio"),
+        ]);
+        if (cancelled) return;
+        setProjects(p);
+        setQuotes(q);
+        setWsName(name);
+      } finally {
+        if (!cancelled) loadedRef.current = true;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!loadedRef.current || !session?.user?.id) return;
+    syncProjects(session.user.id, projects).catch(() => {});
+  }, [projects, session?.user?.id]);
+
+  useEffect(() => {
+    if (!loadedRef.current || !session?.user?.id) return;
+    syncQuotes(session.user.id, quotes).catch(() => {});
+  }, [quotes, session?.user?.id]);
+
+  useEffect(() => {
+    if (view === "app" && !authLoading && !session) setView("landing");
+  }, [view, authLoading, session]);
+
+  const setWsNamePersisted = (name) => {
+    setWsName(name);
+    if (session?.user?.id) saveWorkspaceName(session.user.id, name).catch(() => {});
   };
+
+  const handleIntakeDone = () => {
+    // Real per-link client submissions aren't wired to the database yet —
+    // this only drives the in-app "preview client flow", which stays local by design.
+  };
+
+  if (authLoading) {
+    return (
+      <div data-app="prelima" data-theme={dark ? "dark" : "light"} className="min-h-screen flex items-center justify-center antialiased" style={{ background: "var(--bg)" }}>
+        <ThemeStyles />
+        <Loader2 className="w-6 h-6 animate-spin" style={{ color: "var(--accent)" }} />
+      </div>
+    );
+  }
 
   return (
     <div data-app="prelima" data-theme={dark ? "dark" : "light"} className="min-h-screen antialiased" style={{ background: "var(--bg)" }}>
       <ThemeStyles />
-      {view === "landing" && <Landing onStart={() => startIntake("landing")} onSignIn={() => setView("app")} dark={dark} setDark={setDark} />}
-      {view === "app" && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} onLogout={() => setView("landing")} onPreviewIntake={() => startIntake("app")} dark={dark} setDark={setDark} />}
-      {view === "intake" && <IntakeFlow projectName="Website copy — Northwind Legal" freelancer="BETA Studio" onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
+      {view === "landing" && <Landing onStart={() => startIntake("landing")} onSignIn={() => setView(session ? "app" : "auth")} dark={dark} setDark={setDark} />}
+      {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
+      {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name)} dark={dark} setDark={setDark} />}
+      {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
     </div>
   );
 }

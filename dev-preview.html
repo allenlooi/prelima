@@ -9,7 +9,8 @@
     "react": "https://esm.sh/react@18.3.1",
     "react-dom": "https://esm.sh/react-dom@18.3.1",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-    "lucide-react": "https://esm.sh/lucide-react@0.462.0?external=react"
+    "lucide-react": "https://esm.sh/lucide-react@0.462.0?external=react",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.47.10"
   }
 }
 </script>
@@ -33,7 +34,9 @@ window.addEventListener("unhandledrejection", (e) => {
 (async () => {
   const res = await fetch("./src/App.jsx");
   if (!res.ok) throw new Error("Could not fetch src/App.jsx (HTTP " + res.status + ")");
-  const src = await res.text();
+  // Relative AND root-relative imports (./supabaseClient.js, ./db.js) fail to resolve
+  // against a blob: URL (it isn't hierarchical) — needs a fully-qualified URL instead.
+  const src = (await res.text()).replace(/from "\.\//g, 'from "' + location.origin + '/src/');
   const { code } = Babel.transform(src, { presets: ["react"], sourceType: "module", filename: "app.jsx" });
   const blob = new Blob([code], { type: "text/javascript" });
   const url = URL.createObjectURL(blob);
