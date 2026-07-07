@@ -78,10 +78,12 @@ const ThemeStyles = () => (
       background: var(--surface); color: var(--ink); border: 1px solid var(--line);
     }
     [data-app="prelima"] ::placeholder { color: var(--muted); opacity: .7; }
+    .pr-print-only { display: none; }
     @media print {
       body * { visibility: hidden !important; }
       .pr-print-area, .pr-print-area * { visibility: visible !important; }
       .pr-print-area { position: absolute !important; left: 0; top: 0; width: 100%; margin: 0; padding: 24px; box-shadow: none !important; border: none !important; }
+      .pr-print-only { display: block !important; }
     }
   `}</style>
 );
@@ -168,10 +170,18 @@ const SectionLabel = ({ children }) => (
 const OBJECTIVES = ["Brand awareness", "Lead generation", "Sales / conversions", "Product launch", "Rebrand", "Community growth", "Recruitment"];
 const DELIVERABLE_OPTIONS = ["Logo & identity", "Website", "Social content", "Video", "Campaign", "Copywriting", "Packaging", "Others"];
 const PLATFORMS = ["Instagram", "TikTok", "LinkedIn", "YouTube", "Facebook", "Website", "Email", "Offline / print"];
+const BUDGET_RANGES = [
+  ["RM0 – RM500", 500],
+  ["RM500 – RM1,000", 1000],
+  ["RM1,000 – RM2,000", 2000],
+  ["RM2,000 – RM5,000", 5000],
+  ["RM5,000 – RM10,000", 10000],
+  ["Above RM10,000", "custom"],
+];
 
 const blankAnswers = {
   website: "", overview: "", background: "", objectives: [], audience: "",
-  deliverables: [], platforms: [], timelineWeeks: 6, budget: 5000, budgetFlexible: true,
+  deliverables: [], platforms: [], timelineWeeks: 6, budget: 0, budgetRange: "", budgetFlexible: true,
   revisions: 2, references: "", referencesAvoid: "", refShots: [], deliverablesOther: "", name: "", email: "",
 };
 
@@ -371,6 +381,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     if (s === "objectives") return a.objectives.length > 0;
     if (s === "audience") return a.audience.trim().length > 0;
     if (s === "deliverables") return a.deliverables.length > 0;
+    if (s === "budget") return a.budgetRange && (a.budgetRange !== "Above RM10,000" || a.budget > 0);
     if (s === "contact") return a.name.trim() && /.+@.+\..+/.test(a.email);
     return true;
   };
@@ -399,7 +410,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
               {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
             </div>
             <p className="mono text-[11px] mt-5" style={{ color: "var(--muted)" }}>Keep a copy — handy if you're briefing other vendors too.</p>
-            <div className="pr-print-area" style={{ position: "fixed", left: "-9999px", top: 0 }}>
+            <div className="pr-print-area pr-print-only">
               <h1 className="display text-2xl font-semibold mb-4">Project brief — {projectName}</h1>
               <p style={{ whiteSpace: "pre-wrap" }}>{result && result.professionalBrief ? result.professionalBrief : ""}</p>
               <h2 className="display text-lg font-semibold mt-6 mb-2">Key details</h2>
@@ -522,9 +533,22 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
         )}
 
         {s === "budget" && (
-          <Q idx={idx} total={total} title="What's the budget?" hint="A range helps scope the work honestly — nothing is locked in.">
-            <Slider value={a.budget} min={1000} max={100000} step={500} onChange={v => set({ budget: v })}
-              format={v => v === 100000 ? "RM100,000+" : money(v)} />
+          <Q idx={idx} total={total} title="What's the budget for this project?" hint="A one-time budget for this project, not a monthly figure — a range helps scope the work honestly, nothing is locked in.">
+            <select value={a.budgetRange} onChange={e => {
+                const range = BUDGET_RANGES.find(r => r[0] === e.target.value);
+                set({ budgetRange: e.target.value, budget: range && range[1] !== "custom" ? range[1] : a.budget });
+              }}
+              className="w-full rounded-2xl px-5 py-4 text-base" style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--ink)", boxShadow: "var(--shadow)" }} autoFocus>
+              <option value="" disabled>Select a budget range…</option>
+              {BUDGET_RANGES.map(([label]) => <option key={label} value={label}>{label}</option>)}
+            </select>
+            {a.budgetRange === "Above RM10,000" && (
+              <div className="mt-3 flex items-center rounded-2xl px-5 fade" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+                <span className="mono text-sm mr-2" style={{ color: "var(--muted)" }}>RM</span>
+                <input type="number" min="10000" step="500" value={a.budget || ""} onChange={e => set({ budget: Number(e.target.value) })}
+                  placeholder="Enter your exact budget" className="flex-1 py-4 text-base bg-transparent border-0" style={{ boxShadow: "none" }} autoFocus />
+              </div>
+            )}
             <div className="mt-8 flex items-center gap-3">
               <button onClick={() => set({ budgetFlexible: !a.budgetFlexible })}
                 className="relative w-12 h-7 rounded-full transition-colors"
@@ -1709,7 +1733,10 @@ export default function App() {
   const [view, setView] = useState("landing"); // landing | auth | app | intake
   const [intakeReturn, setIntakeReturn] = useState("landing");
   const [previewProjectName, setPreviewProjectName] = useState("New project");
-  const startIntake = (from, name) => { setIntakeReturn(from); if (name) setPreviewProjectName(name); setView("intake"); };
+  const [intakeIsPreview, setIntakeIsPreview] = useState(false);
+  const startIntake = (from, name, isPreview = false) => {
+    setIntakeReturn(from); if (name) setPreviewProjectName(name); setIntakeIsPreview(isPreview); setView("intake");
+  };
   const [dark, setDark] = useState(false);
 
   const [session, setSession] = useState(null);
@@ -1767,9 +1794,27 @@ export default function App() {
     if (session?.user?.id) saveWorkspaceName(session.user.id, name).catch(() => {});
   };
 
-  const handleIntakeDone = () => {
-    // Real per-link client submissions aren't wired to the database yet —
-    // this only drives the in-app "preview client flow", which stays local by design.
+  const handleIntakeDone = (brief, payload) => {
+    // "Preview client flow" is just the freelancer looking at their own intake link —
+    // it shouldn't create or touch a real project.
+    if (intakeIsPreview || !session?.user?.id) return;
+    const slug = Math.random().toString(36).slice(2, 6);
+    const newProject = {
+      id: "p" + Date.now(),
+      name: payload.overview ? payload.overview.slice(0, 60) : (previewProjectName || "New project"),
+      client: payload.name || "New client",
+      status: "Brief received",
+      created: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+      budget: payload.budget, timelineWeeks: payload.timelineWeeks,
+      link: `prelima.app/b/${slug}`, briefComplete: true, brief,
+      activity: [
+        { t: "now", e: "AI brief generated and structured" },
+        { t: "now", e: `Brief submitted by ${payload.name || payload.email || "client"}` },
+      ],
+      files: [], quote: null, invoice: null,
+    };
+    setProjects(ps => [newProject, ...ps]);
+    setIntakeReturn("app");
   };
 
   if (authLoading) {
@@ -1786,7 +1831,7 @@ export default function App() {
       <ThemeStyles />
       {view === "landing" && <Landing onStart={() => startIntake("landing")} onSignIn={() => setView(session ? "app" : "auth")} dark={dark} setDark={setDark} />}
       {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
-      {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name)} dark={dark} setDark={setDark} />}
+      {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
       {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
     </div>
   );
