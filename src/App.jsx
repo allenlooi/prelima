@@ -760,8 +760,6 @@ function Landing({ onStart, onSignIn, dark, setDark }) {
 /* Dashboard shell + pages                                             */
 /* ------------------------------------------------------------------ */
 
-const COMING_SOON = ["invoices", "payments"];
-
 function ComingSoonPage({ title, body }) {
   return (
     <div className="fade">
@@ -773,9 +771,6 @@ function ComingSoonPage({ title, body }) {
 
 const NAV = [
   ["dashboard", "Dashboard", LayoutDashboard],
-  ["quotations", "Quotations", FileText],
-  ["invoices", "Invoices", Receipt],
-  ["payments", "Payments", Wallet],
   ["settings", "Settings", Settings],
 ];
 
@@ -826,12 +821,8 @@ function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPrevie
           {NAV.map(([id, label, Icon]) => (
             <button key={id} onClick={() => { setPage(id); setOpenProject(null); setMobileNav(false); }}
               className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors"
-              style={{
-                ...(page === id ? { background: "var(--accent-soft)", color: "var(--accent)" } : { color: "var(--muted)" }),
-                ...(COMING_SOON.includes(id) ? { opacity: .45 } : {}),
-              }}>
+              style={page === id ? { background: "var(--accent-soft)", color: "var(--accent)" } : { color: "var(--muted)" }}>
               <Icon className="w-4 h-4" /> {label}
-              {COMING_SOON.includes(id) && <Tag>Soon</Tag>}
             </button>
           ))}
         </nav>
@@ -865,9 +856,9 @@ function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPrevie
 
         <main className="p-5 md:p-8 max-w-5xl">
           {project ? (
-            <ProjectDetail project={project} quotes={quotes} onBack={() => setOpenProject(null)} copy={copy} copied={copied} onPreviewIntake={() => onPreviewIntake(project.name)} onCreateQuote={createQuote} onOpenQuote={(id) => { setPage("quotations"); setOpenProject(null); setOpenQuote(id); }} />
+            <ProjectDetail project={project} quotes={quotes} onBack={() => setOpenProject(null)} copy={copy} copied={copied} onPreviewIntake={() => onPreviewIntake(project.name)} />
           ) : page === "dashboard" ? (
-            <DashboardHome projects={projects} quotes={quotes} open={setOpenProject} />
+            <DashboardHome projects={projects} open={setOpenProject} />
           ) : page === "quotations" ? (
             <QuotationsBoard quotes={quotes} setQuotes={setQuotes} projects={projects}
               openQuote={openQuote} setOpenQuote={setOpenQuote} createQuote={createQuote} />
@@ -898,22 +889,18 @@ function PageTitle({ title, sub, action }) {
   );
 }
 
-function DashboardHome({ projects, quotes, open }) {
+function DashboardHome({ projects, open }) {
   const briefs = projects.filter(p => p.briefComplete).length;
-  const quotesSent = quotes.filter(qt => qt.status !== "Draft").length;
-  const invoices = projects.filter(p => p.invoice).length;
-  const standalone = quotes.filter(qt => !qt.projectId && qt.status !== "Draft").reduce((s, qt) => s + quoteTotal(qt), 0);
-  const pipeline = projects.filter(p => !isPaid(p)).reduce((s, p) => s + projectValue(p, quotes), 0) + standalone;
+  const awaiting = projects.length - briefs;
   return (
     <div className="fade">
-      <PageTitle title="Dashboard" sub="Briefs, quotes and money — one view." />
+      <PageTitle title="Dashboard" sub="Your briefs, one view." />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
+      <div className="grid grid-cols-3 gap-3 md:gap-4 mb-8">
         {[
+          ["Projects", projects.length, FolderKanban],
           ["Briefs received", briefs, FileText],
-          ["Quotations sent", quotesSent, Send],
-          ["Invoices sent", invoices, Receipt],
-          ["Pipeline value", money(pipeline), CircleDollarSign],
+          ["Awaiting brief", awaiting, Clock],
         ].map(([label, val, Icon]) => (
           <Card key={label} className="p-4 md:p-5">
             <Icon className="w-4 h-4 mb-3" style={{ color: "var(--accent)" }} />
@@ -930,46 +917,34 @@ function DashboardHome({ projects, quotes, open }) {
       <Card className="overflow-hidden">
         <div className="hidden md:grid grid-cols-12 gap-3 px-5 py-3 mono text-[11px] uppercase tracking-wider border-b"
           style={{ color: "var(--muted)", borderColor: "var(--line)" }}>
-          <span className="col-span-4">Project</span>
-          <span className="col-span-2">Status</span>
-          <span className="col-span-2">Quotation</span>
-          <span className="col-span-2">Invoice</span>
-          <span className="col-span-2 text-right">Value</span>
+          <span className="col-span-6">Project</span>
+          <span className="col-span-3">Status</span>
+          <span className="col-span-3 text-right">Budget</span>
         </div>
         {projects.map((p, i) => (
           <button key={p.id} onClick={() => open(p.id)}
             className="w-full text-left grid grid-cols-2 md:grid-cols-12 gap-2 md:gap-3 items-center px-4 md:px-5 py-4 transition-colors hover:opacity-90"
             style={{ borderTop: i > 0 ? "1px solid var(--line)" : "none" }}>
-            <div className="col-span-2 md:col-span-4 min-w-0">
+            <div className="col-span-2 md:col-span-6 min-w-0">
               <div className="font-medium text-sm truncate">{p.name}</div>
               <div className="text-xs truncate" style={{ color: "var(--muted)" }}>{p.client}</div>
             </div>
-            <div className="md:col-span-2"><StatusTag s={p.status} /></div>
-            <div className="md:col-span-2 text-right md:text-left">
-              {quoteFor(p, quotes) ? <StatusTag s={quoteFor(p, quotes).status} /> : <span className="mono text-xs" style={{ color: "var(--muted)" }}>—</span>}
-            </div>
-            <div className="md:col-span-2">
-              {p.invoice ? <StatusTag s={p.invoice.status} /> : <span className="mono text-xs" style={{ color: "var(--muted)" }}>—</span>}
-            </div>
-            <div className="md:col-span-2 text-right mono text-sm">
-              {projectValue(p, quotes) ? money(projectValue(p, quotes)) : <span style={{ color: "var(--muted)" }}>—</span>}
+            <div className="md:col-span-3"><StatusTag s={p.status} /></div>
+            <div className="md:col-span-3 text-right mono text-sm">
+              {p.budget ? money(p.budget) : <span style={{ color: "var(--muted)" }}>—</span>}
             </div>
           </button>
         ))}
       </Card>
       )}
-      <p className="mono text-[11px] mt-3" style={{ color: "var(--muted)" }}>
-        Value = quotation total when quoted, otherwise the client's budget from the brief. Pipeline adds standalone sent quotes and excludes paid projects.
-      </p>
     </div>
   );
 }
 
-function ProjectDetail({ project: p, quotes, onBack, copy, copied, onPreviewIntake, onCreateQuote, onOpenQuote }) {
-  const pq = quoteFor(p, quotes);
+function ProjectDetail({ project: p, quotes, onBack, copy, copied, onPreviewIntake }) {
   const [tab, setTab] = useState("overview");
   const [followUpsSent, setFollowUpsSent] = useState(false);
-  const tabs = ["overview", "quotation", "invoice", "payments", "activity"];
+  const tabs = ["overview", "activity"];
   return (
     <div className="fade">
       <button onClick={onBack} className="mono text-[11px] uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
@@ -1039,62 +1014,6 @@ function ProjectDetail({ project: p, quotes, onBack, copy, copied, onPreviewInta
             </>
           )}
         </div>
-      )}
-
-      {tab === "quotation" && (pq ? (
-        <Card className="p-6 max-w-2xl">
-          <div className="flex items-center justify-between mb-5">
-            <div><SectionLabel>Quotation</SectionLabel><div className="mono text-sm">{pq.number}</div></div>
-            <StatusTag s={pq.status} />
-          </div>
-          {pq.mode === "consolidated" ? (
-            <div className="flex justify-between py-3 text-sm">
-              <span>{pq.consolidatedLabel || "Project fee"}</span><span className="mono">{money(quoteSubtotal(pq))}</span>
-            </div>
-          ) : (
-            pq.items.map((it, i) => (
-              <div key={i} className="py-3 border-b" style={{ borderColor: "var(--line)" }}>
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">{it.qty > 1 ? `${it.qty} × ` : ""}{it.title}</span>
-                  <span className="mono">{money((Number(it.qty) || 0) * (Number(it.unit) || 0))}</span>
-                </div>
-                {it.details && (
-                  <ul className="mt-1.5 space-y-0.5">
-                    {it.details.split("\n").filter(Boolean).map((l, j) => (
-                      <li key={j} className="text-xs flex gap-2" style={{ color: "var(--muted)" }}><span>•</span><span>{l}</span></li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))
-          )}
-          <div className="flex justify-between pt-3 text-sm">
-            <span style={{ color: "var(--muted)" }}>Subtotal</span><span className="mono">{money(quoteSubtotal(pq))}</span>
-          </div>
-          {pq.sst > 0 && (
-            <div className="flex justify-between pt-1.5 text-sm">
-              <span style={{ color: "var(--muted)" }}>SST {pq.sst}%</span><span className="mono">{money(quoteTotal(pq) - quoteSubtotal(pq))}</span>
-            </div>
-          )}
-          <div className="flex justify-between py-3 font-semibold">
-            <span>Total</span><span className="mono">{money(quoteTotal(pq))}</span>
-          </div>
-          <Btn variant="secondary" className="mt-4 px-4 py-2 text-xs" onClick={() => onOpenQuote(pq.id)}>
-            <PenLine className="w-3.5 h-3.5" /> Open in Quotations
-          </Btn>
-        </Card>
-      ) : (
-        <EmptyState icon={FileText} title="No quotation yet"
-          body="Create one for this project — it'll be tagged to the brief automatically so everything stays grouped."
-          action={<Btn onClick={() => onCreateQuote(p.id)}><Plus className="w-4 h-4" /> Create quotation</Btn>} />
-      ))}
-
-      {tab === "invoice" && (
-        <EmptyState icon={Receipt} title="Invoices are coming soon" body="Deposits and balances will generate from an accepted quotation, with a payment link attached." />
-      )}
-
-      {tab === "payments" && (
-        <EmptyState icon={Wallet} title="Payments are coming soon" body="Payment links, milestone payments and instalments will live here. The project structure is already built for them." />
       )}
 
       {tab === "activity" && (
