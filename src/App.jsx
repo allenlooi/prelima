@@ -922,11 +922,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 /* Landing page                                                        */
 /* ------------------------------------------------------------------ */
 
-function Landing({ onStart, onSignIn, dark, setDark }) {
-  const soon = [
-    ["Invoices", "Deposits and balances, generated from accepted quotations."],
-    ["Payments", "Payment links, milestones and instalments — get paid without the chase."],
-  ];
+function Landing({ onStart, onStartTaskBrief, onSignIn, dark, setDark }) {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <header className="flex items-center justify-between px-5 md:px-12 py-5 max-w-5xl mx-auto w-full">
@@ -939,49 +935,38 @@ function Landing({ onStart, onSignIn, dark, setDark }) {
         </div>
       </header>
 
-      {/* One word. One action. */}
-      <main className="flex-1 flex flex-col items-center justify-center px-5 text-center py-20 md:py-28">
-        <button onClick={onStart} className="rise group" aria-label="Create brief">
-          <span className="display block text-6xl md:text-9xl font-semibold tracking-tight leading-none transition-transform duration-200 group-hover:scale-[1.02] group-active:scale-[.99]">
-            Create brief<span style={{ color: "var(--accent)" }}>.</span>
-          </span>
-        </button>
-        <div className="rise mt-10" style={{ animationDelay: ".1s" }}>
-          <Btn onClick={onStart} className="text-base px-8 py-4">Create Free Brief <ArrowRight className="w-4 h-4" /></Btn>
-        </div>
-        <p className="rise mono text-[11px] uppercase tracking-[0.16em] mt-8" style={{ color: "var(--muted)", animationDelay: ".18s" }}>
+      <main className="flex-1 flex flex-col items-center justify-center px-5 text-center py-16 md:py-24">
+        <h1 className="rise display text-4xl md:text-6xl font-semibold tracking-tight leading-tight mb-3">
+          What are we briefing today<span style={{ color: "var(--accent)" }}>?</span>
+        </h1>
+        <p className="rise mono text-[11px] uppercase tracking-[0.16em] mb-12" style={{ color: "var(--muted)", animationDelay: ".05s" }}>
           Every successful project starts with a good brief
         </p>
+        <div className="rise grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl" style={{ animationDelay: ".1s" }}>
+          <button onClick={onStart} className="group text-left rounded-2xl p-6 md:p-8 transition-transform duration-150 hover:scale-[1.01] active:scale-[.99]"
+            style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+            <Users className="w-6 h-6 mb-4" style={{ color: "var(--accent)" }} />
+            <div className="display text-xl font-semibold mb-1.5">Write a brief</div>
+            <div className="text-sm leading-relaxed mb-4" style={{ color: "var(--muted)" }}>
+              For a client to tell a freelancer or agency what they need. One link, no login required.
+            </div>
+            <div className="inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
+              Start <ArrowRight className="w-3.5 h-3.5" />
+            </div>
+          </button>
+          <button onClick={onStartTaskBrief} className="group text-left rounded-2xl p-6 md:p-8 transition-transform duration-150 hover:scale-[1.01] active:scale-[.99]"
+            style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+            <Sparkles className="w-6 h-6 mb-4" style={{ color: "var(--accent)" }} />
+            <div className="display text-xl font-semibold mb-1.5">Write a creative brief</div>
+            <div className="text-sm leading-relaxed mb-4" style={{ color: "var(--muted)" }}>
+              For briefing a designer, writer or freelancer on your own team. Sign in to save it.
+            </div>
+            <div className="inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
+              Start <ArrowRight className="w-3.5 h-3.5" />
+            </div>
+          </button>
+        </div>
       </main>
-
-      {/* Features */}
-      <section className="max-w-5xl mx-auto w-full px-5 md:px-12 pb-24">
-        <div className="flex items-center gap-3 mb-5">
-          <SectionLabel>Features</SectionLabel>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="p-6" style={{ borderColor: "var(--accent)" }}>
-            <div className="flex items-center justify-between mb-4">
-              <Sparkles className="w-5 h-5" style={{ color: "var(--accent)" }} />
-              <Tag tone="good">Live</Tag>
-            </div>
-            <div className="font-semibold mb-1.5">Briefs & quotations</div>
-            <div className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
-              One link, no client login. AI structures the brief — then quote it with itemised or one-total billing.
-            </div>
-          </Card>
-          {soon.map(([t, d]) => (
-            <Card key={t} className="p-6 select-none" style={{ opacity: .48, background: "var(--surface-2)" }} aria-disabled="true">
-              <div className="flex items-center justify-between mb-4">
-                <Clock className="w-5 h-5" style={{ color: "var(--muted)" }} />
-                <Tag>Coming soon</Tag>
-              </div>
-              <div className="font-semibold mb-1.5">{t}</div>
-              <div className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{d}</div>
-            </Card>
-          ))}
-        </div>
-      </section>
 
       <footer className="border-t px-5 md:px-12 py-8" style={{ borderColor: "var(--line)" }}>
         <div className="max-w-5xl mx-auto flex items-center justify-between">
@@ -1981,13 +1966,14 @@ function AuthScreen({ onDone, onBack, dark, setDark }) {
 /* ------------------------------------------------------------------ */
 
 export default function App() {
-  const [view, setView] = useState("landing"); // landing | auth | app | intake
+  const [view, setView] = useState("landing"); // landing | auth | app | intake | taskBrief
   const [intakeReturn, setIntakeReturn] = useState("landing");
   const [previewProjectName, setPreviewProjectName] = useState("New project");
   const [intakeIsPreview, setIntakeIsPreview] = useState(false);
   const startIntake = (from, name, isPreview = false) => {
     setIntakeReturn(from); if (name) setPreviewProjectName(name); setIntakeIsPreview(isPreview); setView("intake");
   };
+  const [afterAuth, setAfterAuth] = useState("app");
   const [dark, setDark] = useState(false);
 
   const [session, setSession] = useState(null);
@@ -2045,7 +2031,7 @@ export default function App() {
   }, [taskBriefs, session?.user?.id]);
 
   useEffect(() => {
-    if (view === "app" && !authLoading && !session) setView("landing");
+    if ((view === "app" || view === "taskBrief") && !authLoading && !session) setView("landing");
   }, [view, authLoading, session]);
 
   const setWsNamePersisted = (name) => {
@@ -2092,8 +2078,12 @@ export default function App() {
   return (
     <div data-app="prelima" data-theme={dark ? "dark" : "light"} className="min-h-screen antialiased" style={{ background: "var(--bg)" }}>
       <ThemeStyles />
-      {view === "landing" && <Landing onStart={() => startIntake("landing")} onSignIn={() => setView(session ? "app" : "auth")} dark={dark} setDark={setDark} />}
-      {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
+      {view === "landing" && <Landing
+        onStart={() => startIntake("landing")}
+        onStartTaskBrief={() => { if (session) { setView("taskBrief"); } else { setAfterAuth("taskBrief"); setView("auth"); } }}
+        onSignIn={() => { setAfterAuth("app"); setView(session ? "app" : "auth"); }}
+        dark={dark} setDark={setDark} />}
+      {view === "auth" && <AuthScreen onDone={() => setView(afterAuth)} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
       {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} taskBriefs={taskBriefs} setTaskBriefs={setTaskBriefs} onNewTaskBrief={() => setView("taskBrief")} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
       {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
       {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} onDone={handleTaskBriefDone} onExit={() => setView("app")} />}
