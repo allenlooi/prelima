@@ -2,10 +2,11 @@
 -- Paste this into Supabase: Project -> SQL Editor -> New query -> Run.
 -- Safe to re-run any number of times (drops + recreates policies each time).
 --
--- Design note: projects and quotes are stored as a single `data jsonb` column
--- (rather than one Postgres column per field) so the app's existing JS object
--- shapes work unchanged. `id`, `user_id` are pulled out as real columns only
--- because they're needed for lookups and Row Level Security.
+-- Design note: projects, quotes and task_briefs are stored as a single
+-- `data jsonb` column (rather than one Postgres column per field) so the
+-- app's existing JS object shapes work unchanged. `id`, `user_id` are pulled
+-- out as real columns only because they're needed for lookups and Row
+-- Level Security.
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -27,12 +28,21 @@ create table if not exists public.quotes (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.task_briefs (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  data jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists projects_user_id_idx on public.projects(user_id);
 create index if not exists quotes_user_id_idx on public.quotes(user_id);
+create index if not exists task_briefs_user_id_idx on public.task_briefs(user_id);
 
 alter table public.profiles enable row level security;
 alter table public.projects enable row level security;
 alter table public.quotes enable row level security;
+alter table public.task_briefs enable row level security;
 
 -- Each freelancer can only ever see/write their own rows.
 drop policy if exists "profiles: owner read" on public.profiles;
@@ -59,3 +69,12 @@ create policy "quotes: owner read" on public.quotes for select using (user_id = 
 create policy "quotes: owner insert" on public.quotes for insert with check (user_id = auth.uid());
 create policy "quotes: owner update" on public.quotes for update using (user_id = auth.uid());
 create policy "quotes: owner delete" on public.quotes for delete using (user_id = auth.uid());
+
+drop policy if exists "task_briefs: owner read" on public.task_briefs;
+drop policy if exists "task_briefs: owner insert" on public.task_briefs;
+drop policy if exists "task_briefs: owner update" on public.task_briefs;
+drop policy if exists "task_briefs: owner delete" on public.task_briefs;
+create policy "task_briefs: owner read" on public.task_briefs for select using (user_id = auth.uid());
+create policy "task_briefs: owner insert" on public.task_briefs for insert with check (user_id = auth.uid());
+create policy "task_briefs: owner update" on public.task_briefs for update using (user_id = auth.uid());
+create policy "task_briefs: owner delete" on public.task_briefs for delete using (user_id = auth.uid());

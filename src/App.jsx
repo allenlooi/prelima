@@ -8,7 +8,7 @@ import {
   Undo2, Download, Image, Trash2, Eye, Mail, Lock, AlertCircle
 } from "lucide-react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
-import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, ensureProfile, saveWorkspaceName } from "./db.js";
+import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, fetchTaskBriefs, syncTaskBriefs, ensureProfile, saveWorkspaceName } from "./db.js";
 
 /* ------------------------------------------------------------------ */
 /* Theme                                                               */
@@ -183,6 +183,13 @@ const blankAnswers = {
   website: "", overview: "", background: "", objectives: [], audience: "",
   deliverables: [], platforms: [], timelineWeeks: 6, budget: 0, budgetRange: "", budgetFlexible: true,
   revisions: 2, references: "", referencesAvoid: "", refShots: [], deliverablesOther: "", name: "", email: "",
+};
+
+const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web / Dev", "Other"];
+
+const blankTaskAnswers = {
+  title: "", type: "", description: "", references: "", referencesAvoid: "",
+  deadline: "", assigneeName: "", assigneeEmail: "",
 };
 
 const Chip = ({ active, children, onClick }) => (
@@ -682,6 +689,236 @@ const Wordmark = ({ small }) => (
 );
 
 /* ------------------------------------------------------------------ */
+/* Creative / task brief — freelancer briefing their own team          */
+/* ------------------------------------------------------------------ */
+
+function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
+  const [step, setStep] = useState(-1);
+  const [a, setA] = useState(blankTaskAnswers);
+  const [saved, setSaved] = useState(true);
+  const [submitState, setSubmitState] = useState(null); // null | 'working' | 'done'
+  const [result, setResult] = useState(null);
+  const [link] = useState(() => `prelima.app/t/${Math.random().toString(36).slice(2, 6)}`);
+  const [copied, setCopied] = useState(false);
+
+  const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
+  useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
+
+  const steps = useMemo(() => ([
+    { id: "title", label: "What are we briefing" },
+    { id: "type", label: "Type of work" },
+    { id: "description", label: "Description" },
+    { id: "references", label: "References" },
+    { id: "deadline", label: "Deadline" },
+    { id: "assignee", label: "Who's this for" },
+    { id: "review", label: "Review" },
+  ]), []);
+
+  const idx = step;
+  const total = steps.length;
+  const pct = step < 0 ? 0 : Math.round((step / total) * 100);
+
+  function finish(brief) {
+    setResult(brief);
+    setSubmitState("done");
+    onDone && onDone({
+      id: "t" + Date.now(),
+      title: a.title || "Untitled brief",
+      type: a.type, description: a.description,
+      references: a.references, referencesAvoid: a.referencesAvoid,
+      deadline: a.deadline, assigneeName: a.assigneeName, assigneeEmail: a.assigneeEmail,
+      status: "Ready", created: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+      link, brief,
+    });
+  }
+
+  async function submit() {
+    setSubmitState("working");
+    try {
+      const text = await callClaude([{
+        role: "user",
+        content: `You are structuring a task brief a freelancer/agency is handing off to a designer or creative freelancer on their team.\n\nTask answers (JSON):\n${JSON.stringify(a, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"creativeBrief": "a well-written, clear creative brief in professional plain English", "keyRequirements": ["specific must-follow requirements"], "deliverables": ["concrete expected outputs"]}`
+      }]);
+      const j = parseJSON(text);
+      if (j && j.creativeBrief) { finish(j); return; }
+      throw new Error("bad json");
+    } catch {
+      finish({
+        creativeBrief: `${a.description}\n\nType: ${a.type || "—"}. Deadline: ${a.deadline || "—"}.`,
+        keyRequirements: [], deliverables: [],
+        _fallback: true,
+      });
+    }
+  }
+
+  const canNext = () => {
+    const s = steps[idx]?.id;
+    if (s === "title") return a.title.trim().length > 0;
+    if (s === "type") return a.type.length > 0;
+    if (s === "description") return a.description.trim().length > 0;
+    return true;
+  };
+
+  const next = () => setStep(s => Math.min(s + 1, total - 1));
+  const back = () => setStep(s => Math.max(s - 1, 0));
+
+  if (submitState === "working" || submitState === "done") {
+    return (
+      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer}>
+        <div className="rise max-w-xl">
+          {submitState === "working" ? (<>
+            <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
+            <h2 className="display text-3xl font-semibold mb-3">Structuring your brief…</h2>
+            <p style={{ color: "var(--muted)" }}>AI is turning your notes into a clear creative brief. This takes a few seconds.</p>
+          </>) : (<>
+            <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
+            <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Brief ready.</h2>
+            <p className="mb-8" style={{ color: "var(--muted)" }}>Share the link below with {a.assigneeName || "whoever you're briefing"}, or download a copy.</p>
+            <div className="flex flex-wrap items-center gap-3 mb-3">
+              <button onClick={() => { navigator.clipboard?.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+                className="flex items-center gap-2 rounded-xl px-4 py-3 mono text-xs"
+                style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
+                {copied ? "Link copied" : link}
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download brief</Btn>
+              {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
+            </div>
+            <div className="pr-print-area pr-print-only">
+              <h1 className="display text-2xl font-semibold mb-4">{a.title || "Task brief"}</h1>
+              <p style={{ whiteSpace: "pre-wrap" }}>{result && result.creativeBrief ? result.creativeBrief : ""}</p>
+              {result && result.deliverables && result.deliverables.length > 0 && (<>
+                <h2 className="display text-lg font-semibold mt-6 mb-2">Deliverables</h2>
+                <ul>{result.deliverables.map((d, i) => <li key={i}>{d}</li>)}</ul>
+              </>)}
+              {result && result.keyRequirements && result.keyRequirements.length > 0 && (<>
+                <h2 className="display text-lg font-semibold mt-6 mb-2">Key requirements</h2>
+                <ul>{result.keyRequirements.map((d, i) => <li key={i}>{d}</li>)}</ul>
+              </>)}
+              <h2 className="display text-lg font-semibold mt-6 mb-2">Details</h2>
+              <p>Type: {a.type || "—"}</p>
+              <p>Deadline: {a.deadline || "—"}</p>
+              <p>Assigned to: {a.assigneeName || "—"} {a.assigneeEmail ? `(${a.assigneeEmail})` : ""}</p>
+              <p>References: {a.references || "—"}</p>
+              <p>Avoid: {a.referencesAvoid || "—"}</p>
+            </div>
+          </>)}
+        </div>
+      </IntakeShell>
+    );
+  }
+
+  if (step === -1) {
+    return (
+      <IntakeShell pct={0} saved onExit={onExit} freelancer={freelancer}>
+        <div className="rise max-w-xl">
+          <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>NEW CREATIVE BRIEF</div>
+          <h1 className="display text-3xl md:text-5xl font-semibold leading-tight mb-4">Brief someone on a piece of work.</h1>
+          <p className="text-base md:text-lg mb-8" style={{ color: "var(--muted)" }}>
+            A few quick questions — about two minutes. Answers save automatically.
+          </p>
+          <Btn onClick={() => setStep(0)} className="text-base px-7 py-4">Start <ArrowRight className="w-4 h-4" /></Btn>
+        </div>
+      </IntakeShell>
+    );
+  }
+
+  const s = steps[idx].id;
+
+  return (
+    <IntakeShell pct={pct} saved={saved} onExit={onExit} freelancer={freelancer}>
+      <div className="max-w-2xl w-full">
+        {s === "title" && (
+          <Q idx={idx} total={total} title="What are we briefing?" hint={'A short name for this task — e.g. "Instagram carousel for product launch."'}>
+            <input type="text" value={a.title} onChange={e => set({ title: e.target.value })}
+              placeholder="Task title" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+          </Q>
+        )}
+
+        {s === "type" && (
+          <Q idx={idx} total={total} title="What kind of work is this?" hint="Pick the closest match.">
+            <div className="flex flex-wrap gap-2.5">
+              {TASK_TYPES.map(t => <Chip key={t} active={a.type === t} onClick={() => set({ type: t })}>{t}</Chip>)}
+            </div>
+          </Q>
+        )}
+
+        {s === "description" && (
+          <Q idx={idx} total={total} title="What needs to be made?" hint="Describe the task like you would to a teammate. Type or speak.">
+            <VoiceTA value={a.description} onChange={v => set({ description: v })} placeholder="We need…" cleanHint="task description" />
+          </Q>
+        )}
+
+        {s === "references" && (
+          <Q idx={idx} total={total} title="Any references?" hint="Optional, but it speeds things up.">
+            <SectionLabel>Links or examples to follow</SectionLabel>
+            <TA value={a.references} onChange={v => set({ references: v })}
+              placeholder={"https://…  — like this style\nhttps://…  — similar layout"} rows={3} />
+            <div className="mt-6">
+              <SectionLabel>What to avoid</SectionLabel>
+              <TA value={a.referencesAvoid} onChange={v => set({ referencesAvoid: v })}
+                placeholder="Too busy, wrong brand colours, stock photos…" rows={3} autoFocus={false} />
+            </div>
+          </Q>
+        )}
+
+        {s === "deadline" && (
+          <Q idx={idx} total={total} title="When do you need it by?" hint="Optional — a rough date is fine.">
+            <input type="text" value={a.deadline} onChange={e => set({ deadline: e.target.value })}
+              placeholder="e.g. 15 Jul, or “end of next week”" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+          </Q>
+        )}
+
+        {s === "assignee" && (
+          <Q idx={idx} total={total} title="Who's this for?" hint="Optional — helps personalise the brief if you're sending it on.">
+            <div className="space-y-3">
+              <input type="text" value={a.assigneeName} onChange={e => set({ assigneeName: e.target.value })} placeholder="Their name"
+                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+              <input type="email" value={a.assigneeEmail} onChange={e => set({ assigneeEmail: e.target.value })} placeholder="Their email (optional)"
+                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} />
+            </div>
+          </Q>
+        )}
+
+        {s === "review" && (
+          <Q idx={idx} total={total} title="Quick check before we generate it." hint="Tap any answer to change it.">
+            <div className="space-y-2">
+              {[
+                ["Title", a.title, 0],
+                ["Type", a.type || "—", 1],
+                ["Description", a.description, 2],
+                ["Avoid", a.referencesAvoid || "—", 3],
+                ["Deadline", a.deadline || "—", 4],
+                ["Assigned to", a.assigneeName || "—", 5],
+              ].map(([k, v, go]) => (
+                <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
+                  style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                  <span className="mono text-[11px] uppercase tracking-wider w-24 shrink-0 pt-0.5" style={{ color: "var(--muted)" }}>{k}</span>
+                  <span className="text-sm flex-1 line-clamp-2">{v || "—"}</span>
+                  <PenLine className="w-3.5 h-3.5 shrink-0 mt-1" style={{ color: "var(--muted)" }} />
+                </button>
+              ))}
+            </div>
+            <Btn onClick={submit} className="mt-6 text-base px-7 py-4">
+              <Sparkles className="w-4 h-4" /> Generate brief
+            </Btn>
+          </Q>
+        )}
+
+        {s !== "review" && (
+          <div className="mt-8 flex items-center gap-3">
+            {idx > 0 && <Btn variant="secondary" onClick={back} aria-label="Back"><ArrowLeft className="w-4 h-4" /></Btn>}
+            <Btn onClick={next} disabled={!canNext()}>Continue <ArrowRight className="w-4 h-4" /></Btn>
+          </div>
+        )}
+      </div>
+    </IntakeShell>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Landing page                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -771,21 +1008,23 @@ function ComingSoonPage({ title, body }) {
 
 const NAV = [
   ["dashboard", "Dashboard", LayoutDashboard],
+  ["briefs", "Creative Briefs", FileStack],
   ["settings", "Settings", Settings],
 ];
 
 function StatusTag({ s }) {
-  const tone = s === "Brief received" ? "accent" : s === "Quoted" || s === "Accepted" || s === "Paid" ? "good" : s === "Awaiting brief" || s === "Awaiting payment" || s === "Sent" ? "warn" : "muted";
+  const tone = s === "Brief received" ? "accent" : s === "Quoted" || s === "Accepted" || s === "Paid" || s === "Ready" ? "good" : s === "Awaiting brief" || s === "Awaiting payment" || s === "Sent" ? "warn" : "muted";
   return <Tag tone={tone}>{s}</Tag>;
 }
 
-function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPreviewIntake, dark, setDark, wsName, setWsName }) {
+function AppShell({ projects, setProjects, quotes, setQuotes, taskBriefs, setTaskBriefs, onNewTaskBrief, onLogout, onPreviewIntake, dark, setDark, wsName, setWsName }) {
   const [page, setPage] = useState("dashboard");
   const [openProject, setOpenProject] = useState(null);
   const [copied, setCopied] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [openQuote, setOpenQuote] = useState(null);
+  const [openBrief, setOpenBrief] = useState(null);
 
   const createQuote = (projectId) => {
     const p = projects.find(x => x.id === projectId);
@@ -819,7 +1058,7 @@ function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPrevie
         </div>
         <nav className="space-y-1 flex-1">
           {NAV.map(([id, label, Icon]) => (
-            <button key={id} onClick={() => { setPage(id); setOpenProject(null); setMobileNav(false); }}
+            <button key={id} onClick={() => { setPage(id); setOpenProject(null); setOpenBrief(null); setMobileNav(false); }}
               className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors"
               style={page === id ? { background: "var(--accent-soft)", color: "var(--accent)" } : { color: "var(--muted)" }}>
               <Icon className="w-4 h-4" /> {label}
@@ -859,6 +1098,8 @@ function AppShell({ projects, setProjects, quotes, setQuotes, onLogout, onPrevie
             <ProjectDetail project={project} quotes={quotes} onBack={() => setOpenProject(null)} copy={copy} copied={copied} onPreviewIntake={() => onPreviewIntake(project.name)} />
           ) : page === "dashboard" ? (
             <DashboardHome projects={projects} open={setOpenProject} />
+          ) : page === "briefs" ? (
+            <CreativeBriefsBoard briefs={taskBriefs} setBriefs={setTaskBriefs} openBrief={openBrief} setOpenBrief={setOpenBrief} onNew={onNewTaskBrief} />
           ) : page === "quotations" ? (
             <QuotationsBoard quotes={quotes} setQuotes={setQuotes} projects={projects}
               openQuote={openQuote} setOpenQuote={setOpenQuote} createQuote={createQuote} />
@@ -1123,6 +1364,97 @@ function QuotationsBoard({ quotes, setQuotes, projects, openQuote, setOpenQuote,
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function CreativeBriefsBoard({ briefs, setBriefs, openBrief, setOpenBrief, onNew }) {
+  const t = briefs.find(x => x.id === openBrief);
+  const remove = (id) => { setBriefs(bs => bs.filter(x => x.id !== id)); setOpenBrief(null); };
+
+  if (t) return <CreativeBriefViewer brief={t} onBack={() => setOpenBrief(null)} remove={remove} />;
+
+  return (
+    <div className="fade">
+      <PageTitle title="Creative Briefs" sub="Quick briefs for designers, writers and other freelancers on your team."
+        action={<Btn onClick={onNew} className="px-4 py-2"><Plus className="w-4 h-4" /> New brief</Btn>} />
+      {briefs.length === 0 ? (
+        <EmptyState icon={FileStack} title="No briefs yet" body="Create one to hand off a task to a designer or freelancer." action={<Btn onClick={onNew}><Plus className="w-4 h-4" /> New brief</Btn>} />
+      ) : (
+        <div className="space-y-2">
+          {briefs.map(t => (
+            <Card key={t.id} className="p-4 flex items-center gap-4 cursor-pointer hover:opacity-90" onClick={() => setOpenBrief(t.id)}>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{t.title || "Untitled brief"}</div>
+                <div className="text-xs truncate" style={{ color: "var(--muted)" }}>
+                  {t.type || "—"}{t.assigneeName ? ` · for ${t.assigneeName}` : ""}{t.deadline ? ` · due ${t.deadline}` : ""}
+                </div>
+              </div>
+              <StatusTag s={t.status} />
+              <ChevronRight className="w-4 h-4 shrink-0" style={{ color: "var(--muted)" }} />
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreativeBriefViewer({ brief: t, onBack, remove }) {
+  const [copied, setCopied] = useState(false);
+  const copyLink = () => { navigator.clipboard?.writeText(t.link); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+  return (
+    <div className="fade max-w-2xl">
+      <button onClick={onBack} className="mono text-[11px] uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
+        <ArrowLeft className="w-3 h-3" /> Creative Briefs
+      </button>
+      <div className="flex flex-wrap items-center gap-3 mb-1">
+        <h1 className="display text-2xl md:text-3xl font-semibold tracking-tight">{t.title}</h1>
+        <StatusTag s={t.status} />
+      </div>
+      <p className="text-sm mb-5" style={{ color: "var(--muted)" }}>{t.type || "—"} · created {t.created}{t.deadline ? ` · due ${t.deadline}` : ""}</p>
+
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <button onClick={copyLink} className="flex items-center gap-2 rounded-xl px-4 py-2.5 mono text-xs"
+          style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+          {copied ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
+          {copied ? "Link copied" : t.link}
+        </button>
+      </div>
+
+      <Card className="p-6 mb-4">
+        <SectionLabel>The brief</SectionLabel>
+        <div className="text-sm leading-relaxed whitespace-pre-line mt-2">{t.brief?.creativeBrief}</div>
+      </Card>
+
+      {t.brief?.deliverables?.length > 0 && (
+        <Card className="p-6 mb-4">
+          <SectionLabel>Deliverables</SectionLabel>
+          <ul className="mt-2 space-y-1">
+            {t.brief.deliverables.map((d, i) => <li key={i} className="text-sm flex gap-2"><span>•</span><span>{d}</span></li>)}
+          </ul>
+        </Card>
+      )}
+
+      {t.brief?.keyRequirements?.length > 0 && (
+        <Card className="p-6 mb-4">
+          <SectionLabel>Key requirements</SectionLabel>
+          <ul className="mt-2 space-y-1">
+            {t.brief.keyRequirements.map((d, i) => <li key={i} className="text-sm flex gap-2"><span>•</span><span>{d}</span></li>)}
+          </ul>
+        </Card>
+      )}
+
+      {(t.assigneeName || t.assigneeEmail) && (
+        <Card className="p-6 mb-4">
+          <SectionLabel>Assigned to</SectionLabel>
+          <div className="text-sm mt-2">{t.assigneeName || "—"}{t.assigneeEmail ? ` · ${t.assigneeEmail}` : ""}</div>
+        </Card>
+      )}
+
+      <button onClick={() => remove(t.id)} className="inline-flex items-center gap-1.5 text-sm mt-2" style={{ color: "var(--muted)" }}>
+        <Trash2 className="w-3.5 h-3.5" /> Delete
+      </button>
     </div>
   );
 }
@@ -1662,6 +1994,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [projects, setProjects] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [taskBriefs, setTaskBriefs] = useState([]);
   const [wsName, setWsName] = useState("My Studio");
   const loadedRef = useRef(false);
 
@@ -1673,19 +2006,21 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session?.user?.id) { loadedRef.current = false; setProjects([]); setQuotes([]); return; }
+    if (!session?.user?.id) { loadedRef.current = false; setProjects([]); setQuotes([]); setTaskBriefs([]); return; }
     let cancelled = false;
     loadedRef.current = false;
     (async () => {
       try {
-        const [p, q, name] = await Promise.all([
+        const [p, q, tb, name] = await Promise.all([
           fetchProjects(session.user.id),
           fetchQuotes(session.user.id),
+          fetchTaskBriefs(session.user.id),
           ensureProfile(session.user.id, "My Studio"),
         ]);
         if (cancelled) return;
         setProjects(p);
         setQuotes(q);
+        setTaskBriefs(tb);
         setWsName(name);
       } finally {
         if (!cancelled) loadedRef.current = true;
@@ -1703,6 +2038,11 @@ export default function App() {
     if (!loadedRef.current || !session?.user?.id) return;
     syncQuotes(session.user.id, quotes).catch(() => {});
   }, [quotes, session?.user?.id]);
+
+  useEffect(() => {
+    if (!loadedRef.current || !session?.user?.id) return;
+    syncTaskBriefs(session.user.id, taskBriefs).catch(() => {});
+  }, [taskBriefs, session?.user?.id]);
 
   useEffect(() => {
     if (view === "app" && !authLoading && !session) setView("landing");
@@ -1736,6 +2076,10 @@ export default function App() {
     setIntakeReturn("app");
   };
 
+  const handleTaskBriefDone = (newBrief) => {
+    setTaskBriefs(tb => [newBrief, ...tb]);
+  };
+
   if (authLoading) {
     return (
       <div data-app="prelima" data-theme={dark ? "dark" : "light"} className="min-h-screen flex items-center justify-center antialiased" style={{ background: "var(--bg)" }}>
@@ -1750,8 +2094,9 @@ export default function App() {
       <ThemeStyles />
       {view === "landing" && <Landing onStart={() => startIntake("landing")} onSignIn={() => setView(session ? "app" : "auth")} dark={dark} setDark={setDark} />}
       {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
-      {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
+      {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} taskBriefs={taskBriefs} setTaskBriefs={setTaskBriefs} onNewTaskBrief={() => setView("taskBrief")} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
       {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
+      {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} onDone={handleTaskBriefDone} onExit={() => setView("app")} />}
     </div>
   );
 }

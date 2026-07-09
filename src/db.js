@@ -28,6 +28,9 @@ export const syncProjects = (userId, projects) => syncRows("projects", userId, p
 export const fetchQuotes = (userId) => fetchRows("quotes", userId);
 export const syncQuotes = (userId, quotes) => syncRows("quotes", userId, quotes);
 
+export const fetchTaskBriefs = (userId) => fetchRows("task_briefs", userId);
+export const syncTaskBriefs = (userId, briefs) => syncRows("task_briefs", userId, briefs);
+
 export async function fetchProfile(userId) {
   const { data, error } = await supabase.from("profiles").select("workspace_name").eq("id", userId).maybeSingle();
   if (error) throw error;
