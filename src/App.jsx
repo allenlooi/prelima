@@ -4,8 +4,8 @@ import {
   FolderKanban, Users, FileText, Receipt, CreditCard, Settings, Sun, Moon,
   Plus, Globe, Upload, ChevronRight, Clock, CircleDollarSign, X, Loader2,
   CheckCircle2, AlertTriangle, HelpCircle, Search, MoreHorizontal, Send,
-  FileStack, Wallet, Activity, Paperclip, ExternalLink, PenLine, Mic, Square,
-  Undo2, Download, Image, Trash2, Eye, Mail, Lock, AlertCircle
+  FileStack, Wallet, Activity, ExternalLink, PenLine, Mic, Square,
+  Undo2, Download, Trash2, Eye, Mail, Lock, AlertCircle
 } from "lucide-react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, fetchTaskBriefs, syncTaskBriefs, ensureProfile, saveWorkspaceName } from "./db.js";
@@ -168,7 +168,7 @@ const SectionLabel = ({ children }) => (
 /* ------------------------------------------------------------------ */
 
 const OBJECTIVES = ["Brand awareness", "Lead generation", "Sales / conversions", "Product launch", "Rebrand", "Community growth", "Recruitment"];
-const DELIVERABLE_OPTIONS = ["Logo & identity", "Website", "Social content", "Video", "Campaign", "Copywriting", "Packaging", "Others"];
+const DELIVERABLE_OPTIONS = ["Logo & identity", "Website", "Social content", "Video", "Campaign", "Copywriting", "Packaging", "Paid media / Paid social", "Others"];
 const PLATFORMS = ["Instagram", "TikTok", "LinkedIn", "YouTube", "Facebook", "Website", "Email", "Offline / print"];
 const BUDGET_RANGES = [
   ["RM0 – RM500", 500],
@@ -181,8 +181,9 @@ const BUDGET_RANGES = [
 
 const blankAnswers = {
   website: "", overview: "", background: "", objectives: [], audience: "",
-  deliverables: [], platforms: [], timelineWeeks: 6, budget: 0, budgetRange: "", budgetFlexible: true,
-  revisions: 2, references: "", referencesAvoid: "", refShots: [], deliverablesOther: "", name: "", email: "",
+  deliverables: [], platforms: [], timelineMode: "weeks", timelineWeeks: 6, timelineDate: "",
+  budget: 0, budgetRange: "", budgetFlexible: true,
+  revisions: 2, deliverablesOther: "",
 };
 
 const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web / Dev", "Other"];
@@ -330,8 +331,6 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     { id: "timeline", label: "Timeline" },
     { id: "budget", label: "Budget" },
     { id: "revisions", label: "Revisions" },
-    { id: "references", label: "References" },
-    { id: "contact", label: "Your details" },
     { id: "review", label: "Review" },
   ]), []);
 
@@ -373,7 +372,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
       throw new Error("bad json");
     } catch {
       const fallback = {
-        professionalBrief: `${payload.overview}\n\n${payload.background}\n\nObjectives: ${payload.objectives.join(", ") || "—"}. Audience: ${payload.audience || "—"}.\nDeliverables: ${payload.deliverables.join(", ") || "—"} across ${payload.platforms.join(", ") || "—"}.\nTimeline: ${payload.timelineWeeks} weeks. Budget: ${money(payload.budget)}${payload.budgetFlexible ? " (flexible)" : " (fixed)"} with ${payload.revisions} revision rounds.`,
+        professionalBrief: `${payload.overview}\n\n${payload.background}\n\nObjectives: ${payload.objectives.join(", ") || "—"}. Audience: ${payload.audience || "—"}.\nDeliverables: ${payload.deliverables.join(", ") || "—"} across ${payload.platforms.join(", ") || "—"}.\nTimeline: ${payload.timelineMode === "date" ? (payload.timelineDate || "—") : `${payload.timelineWeeks} weeks`}. Budget: ${money(payload.budget)}${payload.budgetFlexible ? " (flexible)" : " (fixed)"} with ${payload.revisions} revision rounds.`,
         missingInfo: [], followUpQuestions: [], unclearRequirements: [], scopeGaps: [],
         _fallback: true,
       };
@@ -389,7 +388,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     if (s === "audience") return a.audience.trim().length > 0;
     if (s === "deliverables") return a.deliverables.length > 0;
     if (s === "budget") return a.budgetRange && (a.budgetRange !== "Above RM10,000" || a.budget > 0);
-    if (s === "contact") return a.name.trim() && /.+@.+\..+/.test(a.email);
+    if (s === "timeline") return a.timelineMode !== "date" || a.timelineDate;
     return true;
   };
 
@@ -424,12 +423,9 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
               <p>Objectives: {a.objectives.join(", ") || "—"}</p>
               <p>Deliverables: {a.deliverables.map(d => d === "Others" ? (a.deliverablesOther || "Others") : d).join(", ") || "—"}</p>
               <p>Platforms: {a.platforms.join(", ") || "—"}</p>
-              <p>Timeline: {a.timelineWeeks} weeks</p>
+              <p>Timeline: {a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</p>
               <p>Budget: {money(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</p>
               <p>Revisions: {a.revisions}</p>
-              <p>References: {a.references || "—"}</p>
-              <p>Avoid: {a.referencesAvoid || "—"}</p>
-              <p>Contact: {a.name} · {a.email}</p>
             </div>
           </>)}
         </div>
@@ -533,9 +529,23 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
         )}
 
         {s === "timeline" && (
-          <Q idx={idx} total={total} title="When do you need it?" hint="A rough timeline is fine — drag the slider.">
-            <Slider value={a.timelineWeeks} min={1} max={24} onChange={v => set({ timelineWeeks: v })}
-              format={v => v === 24 ? "24+ weeks" : `${v} week${v > 1 ? "s" : ""}`} />
+          <Q idx={idx} total={total} title="When do you need it?" hint="A rough timeline works, or pick an exact date if you have one.">
+            <div className="flex rounded-xl p-0.5 mb-6 w-fit" style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+              {[["weeks", "Rough timeframe"], ["date", "Specific date"]].map(([m, label]) => (
+                <button key={m} onClick={() => set({ timelineMode: m })}
+                  className="px-3.5 py-1.5 rounded-[10px] text-xs font-medium transition-all"
+                  style={a.timelineMode === m ? { background: "var(--surface)", boxShadow: "var(--shadow)", color: "var(--ink)" } : { color: "var(--muted)" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {a.timelineMode === "date" ? (
+              <input type="date" value={a.timelineDate} onChange={e => set({ timelineDate: e.target.value })}
+                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            ) : (
+              <Slider value={a.timelineWeeks} min={1} max={24} onChange={v => set({ timelineWeeks: v })}
+                format={v => v === 24 ? "24+ weeks" : `${v} week${v > 1 ? "s" : ""}`} />
+            )}
           </Q>
         )}
 
@@ -576,46 +586,6 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           </Q>
         )}
 
-        {s === "references" && (
-          <Q idx={idx} total={total} title="Show us what you like — and what to avoid." hint="Both help us hit the mark faster.">
-            <SectionLabel>Links or screenshots you want us to check out</SectionLabel>
-            <TA value={a.references} onChange={v => set({ references: v })}
-              placeholder={"https://…  — love the tone\nhttps://…  — great layout"} rows={3} />
-            <button
-              onClick={() => set({ refShots: [...a.refShots, { name: `screenshot-${a.refShots.length + 1}.png` }] })}
-              className="mt-3 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
-              style={{ background: "var(--surface)", border: "1px dashed var(--line)", color: "var(--muted)" }}>
-              <Image className="w-4 h-4" /> Add a screenshot
-            </button>
-            {a.refShots.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {a.refShots.map((f, i) => (
-                  <span key={i} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
-                    <Paperclip className="w-3.5 h-3.5" style={{ color: "var(--muted)" }} /> {f.name}
-                    <button onClick={() => set({ refShots: a.refShots.filter((_, j) => j !== i) })} aria-label="Remove screenshot"><X className="w-3.5 h-3.5" style={{ color: "var(--muted)" }} /></button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="mt-6">
-              <SectionLabel>What you don't want to see</SectionLabel>
-              <TA value={a.referencesAvoid} onChange={v => set({ referencesAvoid: v })}
-                placeholder="Too corporate, cluttered layouts, stock-photo handshakes…" rows={3} autoFocus={false} />
-            </div>
-          </Q>
-        )}
-
-        {s === "contact" && (
-          <Q idx={idx} total={total} title="Last thing — who are you?" hint="So the brief lands with your name on it.">
-            <div className="space-y-3">
-              <input type="text" value={a.name} onChange={e => set({ name: e.target.value })} placeholder="Full name"
-                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
-              <input type="email" value={a.email} onChange={e => set({ email: e.target.value })} placeholder="Email address"
-                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} />
-            </div>
-          </Q>
-        )}
-
         {s === "review" && (
           <Q idx={idx} total={total} title="Quick check before we send." hint="Tap any answer to change it.">
             <div className="space-y-2">
@@ -625,10 +595,8 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
                 ["Overview", a.overview, 1],
                 ["Objectives", a.objectives.join(", "), 2],
                 ["Deliverables", a.deliverables.map(d => d === "Others" ? (a.deliverablesOther || "Others") : d).join(", "), 4],
-                ["Timeline", `${a.timelineWeeks} weeks`, 6],
+                ["Timeline", a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`, 6],
                 ["Budget", `${money(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`, 7],
-                ["Avoid", a.referencesAvoid || "—", 9],
-                ["Contact", `${a.name} · ${a.email}`, 10],
               ].map(([k, v, go]) => (
                 <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
                   style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
@@ -1204,7 +1172,7 @@ function ProjectDetail({ project: p, quotes, onBack, copy, copied, onPreviewInta
       {tab === "overview" && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3 md:gap-4">
-            {[["Value", projectValue(p, quotes) ? money(projectValue(p, quotes)) : "—"], ["Timeline", p.timelineWeeks ? `${p.timelineWeeks} weeks` : "—"], ["Brief", p.briefComplete ? "Complete" : "Awaiting client"]].map(([k, v]) => (
+            {[["Value", projectValue(p, quotes) ? money(projectValue(p, quotes)) : "—"], ["Timeline", p.timelineMode === "date" ? (p.timelineDate || "—") : (p.timelineWeeks ? `${p.timelineWeeks} weeks` : "—")], ["Brief", p.briefComplete ? "Complete" : "Awaiting client"]].map(([k, v]) => (
               <Card key={k} className="p-4 md:p-5"><SectionLabel>{k}</SectionLabel><div className="display text-lg md:text-xl font-semibold">{v}</div></Card>
             ))}
           </div>
@@ -1973,7 +1941,6 @@ export default function App() {
   const startIntake = (from, name, isPreview = false) => {
     setIntakeReturn(from); if (name) setPreviewProjectName(name); setIntakeIsPreview(isPreview); setView("intake");
   };
-  const [afterAuth, setAfterAuth] = useState("app");
   const [dark, setDark] = useState(false);
 
   const [session, setSession] = useState(null);
@@ -2031,7 +1998,7 @@ export default function App() {
   }, [taskBriefs, session?.user?.id]);
 
   useEffect(() => {
-    if ((view === "app" || view === "taskBrief") && !authLoading && !session) setView("landing");
+    if (view === "app" && !authLoading && !session) setView("landing");
   }, [view, authLoading, session]);
 
   const setWsNamePersisted = (name) => {
@@ -2047,14 +2014,14 @@ export default function App() {
     const newProject = {
       id: "p" + Date.now(),
       name: payload.overview ? payload.overview.slice(0, 60) : (previewProjectName || "New project"),
-      client: payload.name || "New client",
+      client: "New client",
       status: "Brief received",
       created: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
-      budget: payload.budget, timelineWeeks: payload.timelineWeeks,
+      budget: payload.budget, timelineMode: payload.timelineMode, timelineWeeks: payload.timelineWeeks, timelineDate: payload.timelineDate,
       link: `prelima.app/b/${slug}`, briefComplete: true, brief,
       activity: [
         { t: "now", e: "AI brief generated and structured" },
-        { t: "now", e: `Brief submitted by ${payload.name || payload.email || "client"}` },
+        { t: "now", e: "Brief submitted by client" },
       ],
       files: [], quote: null, invoice: null,
     };
@@ -2080,10 +2047,10 @@ export default function App() {
       <ThemeStyles />
       {view === "landing" && <Landing
         onStart={() => startIntake("landing")}
-        onStartTaskBrief={() => { if (session) { setView("taskBrief"); } else { setAfterAuth("taskBrief"); setView("auth"); } }}
-        onSignIn={() => { setAfterAuth("app"); setView(session ? "app" : "auth"); }}
+        onStartTaskBrief={() => setView("taskBrief")}
+        onSignIn={() => setView(session ? "app" : "auth")}
         dark={dark} setDark={setDark} />}
-      {view === "auth" && <AuthScreen onDone={() => setView(afterAuth)} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
+      {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
       {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} taskBriefs={taskBriefs} setTaskBriefs={setTaskBriefs} onNewTaskBrief={() => setView("taskBrief")} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
       {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
       {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} onDone={handleTaskBriefDone} onExit={() => setView("app")} />}
