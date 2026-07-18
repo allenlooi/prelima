@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, fetchTaskBriefs, syncTaskBriefs, ensureProfile, saveWorkspaceName } from "./db.js";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 
 /* ------------------------------------------------------------------ */
 /* Theme                                                               */
@@ -126,6 +127,49 @@ function parseJSON(text) {
 
 const downloadBrief = () => window.print();
 
+async function downloadTaskBriefDocx(a, result, typeLabel) {
+  const bullets = (items) => (items || []).map(t => new Paragraph({ text: t, bullet: { level: 0 } }));
+  const detail = (label, value) => new Paragraph({
+    spacing: { after: 80 },
+    children: [new TextRun({ text: `${label}: `, bold: true }), new TextRun(value || "—")],
+  });
+
+  const doc = new Document({
+    sections: [{
+      children: [
+        new Paragraph({ text: a.title || "Task brief", heading: HeadingLevel.TITLE }),
+        new Paragraph({ text: (result && result.creativeBrief) || "", spacing: { after: 200 } }),
+        ...(result && result.deliverables && result.deliverables.length ? [
+          new Paragraph({ text: "Deliverables", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
+          ...bullets(result.deliverables),
+        ] : []),
+        ...(result && result.keyRequirements && result.keyRequirements.length ? [
+          new Paragraph({ text: "Key requirements", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
+          ...bullets(result.keyRequirements),
+        ] : []),
+        new Paragraph({ text: "Details", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
+        detail("Type", typeLabel),
+        detail("Deadline", a.deadline),
+        detail("Problem", a.problem),
+        detail("Audience", a.audience),
+        detail("Insights", a.insights),
+        detail("References", a.references),
+        detail("Avoid", a.referencesAvoid),
+        detail("Working files", a.workingFiles),
+        detail("Working deck", a.workingDeck),
+        detail("Extra links", a.extraLinks),
+      ],
+    }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const el = document.createElement("a");
+  el.href = url; el.download = `${(a.title || "brief").replace(/[^\w-]+/g, "-")}.docx`;
+  document.body.appendChild(el); el.click();
+  document.body.removeChild(el); URL.revokeObjectURL(url);
+}
+
 /* ------------------------------------------------------------------ */
 /* Atoms                                                               */
 /* ------------------------------------------------------------------ */
@@ -186,11 +230,14 @@ const blankAnswers = {
   revisions: 2, deliverablesOther: "",
 };
 
-const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web / Dev", "Other"];
+const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web Dev", "Ads management", "Other"];
 
 const blankTaskAnswers = {
-  title: "", type: "", description: "", references: "", referencesAvoid: "",
-  deadline: "", assigneeName: "", assigneeEmail: "",
+  title: "", type: [], typeOther: "", description: "",
+  problem: "", audience: "", insights: "",
+  references: "", referencesAvoid: "",
+  workingFiles: "", workingDeck: "", extraLinks: "",
+  deadline: "",
 };
 
 const Chip = ({ active, children, onClick }) => (
@@ -670,21 +717,26 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const [copied, setCopied] = useState(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
+  const toggle = (key, val) => set({ [key]: a[key].includes(val) ? a[key].filter(v => v !== val) : [...a[key], val] });
   useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
 
   const steps = useMemo(() => ([
     { id: "title", label: "What are we briefing" },
     { id: "type", label: "Type of work" },
     { id: "description", label: "Description" },
+    { id: "problem", label: "Problem to solve" },
+    { id: "audience", label: "Target audience" },
+    { id: "insights", label: "Insights" },
     { id: "references", label: "References" },
+    { id: "links", label: "Working files & links" },
     { id: "deadline", label: "Deadline" },
-    { id: "assignee", label: "Who's this for" },
     { id: "review", label: "Review" },
   ]), []);
 
   const idx = step;
   const total = steps.length;
   const pct = step < 0 ? 0 : Math.round((step / total) * 100);
+  const typeLabel = a.type.map(t => t === "Other" ? (a.typeOther || "Other") : t).join(", ");
 
   function finish(brief) {
     setResult(brief);
@@ -692,9 +744,11 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     onDone && onDone({
       id: "t" + Date.now(),
       title: a.title || "Untitled brief",
-      type: a.type, description: a.description,
+      type: a.type, typeOther: a.typeOther, description: a.description,
+      problem: a.problem, audience: a.audience, insights: a.insights,
       references: a.references, referencesAvoid: a.referencesAvoid,
-      deadline: a.deadline, assigneeName: a.assigneeName, assigneeEmail: a.assigneeEmail,
+      workingFiles: a.workingFiles, workingDeck: a.workingDeck, extraLinks: a.extraLinks,
+      deadline: a.deadline,
       status: "Ready", created: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
       link, brief,
     });
@@ -705,14 +759,14 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     try {
       const text = await callClaude([{
         role: "user",
-        content: `You are structuring a task brief a freelancer/agency is handing off to a designer or creative freelancer on their team.\n\nTask answers (JSON):\n${JSON.stringify(a, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"creativeBrief": "a well-written, clear creative brief in professional plain English", "keyRequirements": ["specific must-follow requirements"], "deliverables": ["concrete expected outputs"]}`
+        content: `You are structuring a task brief a freelancer/agency is handing off to a designer or creative freelancer on their team.\n\nTask answers (JSON):\n${JSON.stringify(a, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"creativeBrief": "a well-written, clear creative brief in professional plain English that weaves in the problem, target audience and any insights provided", "keyRequirements": ["specific must-follow requirements"], "deliverables": ["concrete expected outputs"]}`
       }]);
       const j = parseJSON(text);
       if (j && j.creativeBrief) { finish(j); return; }
       throw new Error("bad json");
     } catch {
       finish({
-        creativeBrief: `${a.description}\n\nType: ${a.type || "—"}. Deadline: ${a.deadline || "—"}.`,
+        creativeBrief: `${a.description}${a.problem ? `\n\nProblem: ${a.problem}` : ""}${a.audience ? `\n\nAudience: ${a.audience}` : ""}\n\nType: ${typeLabel || "—"}. Deadline: ${a.deadline || "—"}.`,
         keyRequirements: [], deliverables: [],
         _fallback: true,
       });
@@ -722,7 +776,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const canNext = () => {
     const s = steps[idx]?.id;
     if (s === "title") return a.title.trim().length > 0;
-    if (s === "type") return a.type.length > 0;
+    if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || a.typeOther.trim().length > 0);
     if (s === "description") return a.description.trim().length > 0;
     return true;
   };
@@ -741,7 +795,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
           </>) : (<>
             <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
             <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Brief ready.</h2>
-            <p className="mb-8" style={{ color: "var(--muted)" }}>Share the link below with {a.assigneeName || "whoever you're briefing"}, or download a copy.</p>
+            <p className="mb-8" style={{ color: "var(--muted)" }}>Share the link below with whoever's doing the work, or download a copy.</p>
             <div className="flex flex-wrap items-center gap-3 mb-3">
               <button onClick={() => { navigator.clipboard?.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                 className="flex items-center gap-2 rounded-xl px-4 py-3 mono text-xs"
@@ -751,7 +805,8 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download brief</Btn>
+              <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download PDF</Btn>
+              <Btn variant="secondary" onClick={() => downloadTaskBriefDocx(a, result, typeLabel)}><FileText className="w-4 h-4" /> Download Word doc</Btn>
               {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
             </div>
             <div className="pr-print-area pr-print-only">
@@ -766,11 +821,16 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                 <ul>{result.keyRequirements.map((d, i) => <li key={i}>{d}</li>)}</ul>
               </>)}
               <h2 className="display text-lg font-semibold mt-6 mb-2">Details</h2>
-              <p>Type: {a.type || "—"}</p>
+              <p>Type: {typeLabel || "—"}</p>
               <p>Deadline: {a.deadline || "—"}</p>
-              <p>Assigned to: {a.assigneeName || "—"} {a.assigneeEmail ? `(${a.assigneeEmail})` : ""}</p>
+              <p>Problem: {a.problem || "—"}</p>
+              <p>Audience: {a.audience || "—"}</p>
+              <p>Insights: {a.insights || "—"}</p>
               <p>References: {a.references || "—"}</p>
               <p>Avoid: {a.referencesAvoid || "—"}</p>
+              <p>Working files: {a.workingFiles || "—"}</p>
+              <p>Working deck: {a.workingDeck || "—"}</p>
+              <p>Extra links: {a.extraLinks || "—"}</p>
             </div>
           </>)}
         </div>
@@ -806,16 +866,39 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "type" && (
-          <Q idx={idx} total={total} title="What kind of work is this?" hint="Pick the closest match.">
+          <Q idx={idx} total={total} title="What kind of work is this?" hint="Pick everything that applies.">
             <div className="flex flex-wrap gap-2.5">
-              {TASK_TYPES.map(t => <Chip key={t} active={a.type === t} onClick={() => set({ type: t })}>{t}</Chip>)}
+              {TASK_TYPES.map(t => <Chip key={t} active={a.type.includes(t)} onClick={() => toggle("type", t)}>{t}</Chip>)}
             </div>
+            {a.type.includes("Other") && (
+              <input type="text" value={a.typeOther} onChange={e => set({ typeOther: e.target.value })}
+                placeholder="Tell us what kind of work…"
+                className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            )}
           </Q>
         )}
 
         {s === "description" && (
           <Q idx={idx} total={total} title="What needs to be made?" hint="Describe the task like you would to a teammate. Type or speak.">
             <VoiceTA value={a.description} onChange={v => set({ description: v })} placeholder="We need…" cleanHint="task description" />
+          </Q>
+        )}
+
+        {s === "problem" && (
+          <Q idx={idx} total={total} title="What problem are we trying to solve?" hint="Optional — the 'why' behind this task helps whoever's doing the work make better calls.">
+            <VoiceTA value={a.problem} onChange={v => set({ problem: v })} placeholder="We're trying to…" cleanHint="problem statement" />
+          </Q>
+        )}
+
+        {s === "audience" && (
+          <Q idx={idx} total={total} title="Who's the target audience?" hint={'Optional. Example: "Women 24–38 within 5km of Bangsar who currently work out at gyms."'}>
+            <VoiceTA value={a.audience} onChange={v => set({ audience: v })} placeholder="This is for…" rows={4} cleanHint="target audience description" />
+          </Q>
+        )}
+
+        {s === "insights" && (
+          <Q idx={idx} total={total} title="Any insights that could help?" hint="Optional — data, past learnings, or context that shapes the work.">
+            <TA value={a.insights} onChange={v => set({ insights: v })} placeholder="What we've learned so far…" rows={4} />
           </Q>
         )}
 
@@ -832,21 +915,27 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
           </Q>
         )}
 
-        {s === "deadline" && (
-          <Q idx={idx} total={total} title="When do you need it by?" hint="Optional — a rough date is fine.">
-            <input type="text" value={a.deadline} onChange={e => set({ deadline: e.target.value })}
-              placeholder="e.g. 15 Jul, or “end of next week”" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+        {s === "links" && (
+          <Q idx={idx} total={total} title="Any files or links to share?" hint="Optional — working files, a deck, anything relevant.">
+            <SectionLabel>Working files</SectionLabel>
+            <input type="url" value={a.workingFiles} onChange={e => set({ workingFiles: e.target.value })}
+              placeholder="Link to source files, assets, brand kit…" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />
+            <div className="mt-4">
+              <SectionLabel>Working deck</SectionLabel>
+              <input type="url" value={a.workingDeck} onChange={e => set({ workingDeck: e.target.value })}
+                placeholder="Link to a brief deck, strategy doc…" className="w-full rounded-xl px-4 py-3 text-sm" />
+            </div>
+            <div className="mt-4">
+              <SectionLabel>Extra links</SectionLabel>
+              <TA value={a.extraLinks} onChange={v => set({ extraLinks: v })} placeholder={"https://…\nhttps://…"} rows={3} autoFocus={false} />
+            </div>
           </Q>
         )}
 
-        {s === "assignee" && (
-          <Q idx={idx} total={total} title="Who's this for?" hint="Optional — helps personalise the brief if you're sending it on.">
-            <div className="space-y-3">
-              <input type="text" value={a.assigneeName} onChange={e => set({ assigneeName: e.target.value })} placeholder="Their name"
-                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
-              <input type="email" value={a.assigneeEmail} onChange={e => set({ assigneeEmail: e.target.value })} placeholder="Their email (optional)"
-                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} />
-            </div>
+        {s === "deadline" && (
+          <Q idx={idx} total={total} title="When do you need it by?" hint="Optional — pick a date if you have one.">
+            <input type="date" value={a.deadline} onChange={e => set({ deadline: e.target.value })}
+              className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
           </Q>
         )}
 
@@ -855,11 +944,12 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             <div className="space-y-2">
               {[
                 ["Title", a.title, 0],
-                ["Type", a.type || "—", 1],
+                ["Type", typeLabel || "—", 1],
                 ["Description", a.description, 2],
-                ["Avoid", a.referencesAvoid || "—", 3],
-                ["Deadline", a.deadline || "—", 4],
-                ["Assigned to", a.assigneeName || "—", 5],
+                ["Problem", a.problem || "—", 3],
+                ["Audience", a.audience || "—", 4],
+                ["Insights", a.insights || "—", 5],
+                ["Deadline", a.deadline || "—", 8],
               ].map(([k, v, go]) => (
                 <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
                   style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
@@ -1340,7 +1430,7 @@ function CreativeBriefsBoard({ briefs, setBriefs, openBrief, setOpenBrief, onNew
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">{t.title || "Untitled brief"}</div>
                 <div className="text-xs truncate" style={{ color: "var(--muted)" }}>
-                  {t.type || "—"}{t.assigneeName ? ` · for ${t.assigneeName}` : ""}{t.deadline ? ` · due ${t.deadline}` : ""}
+                  {(t.type || []).join(", ") || "—"}{t.deadline ? ` · due ${t.deadline}` : ""}
                 </div>
               </div>
               <StatusTag s={t.status} />
@@ -1365,7 +1455,7 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
         <h1 className="display text-2xl md:text-3xl font-semibold tracking-tight">{t.title}</h1>
         <StatusTag s={t.status} />
       </div>
-      <p className="text-sm mb-5" style={{ color: "var(--muted)" }}>{t.type || "—"} · created {t.created}{t.deadline ? ` · due ${t.deadline}` : ""}</p>
+      <p className="text-sm mb-5" style={{ color: "var(--muted)" }}>{(t.type || []).join(", ") || "—"} · created {t.created}{t.deadline ? ` · due ${t.deadline}` : ""}</p>
 
       <div className="flex flex-wrap items-center gap-2 mb-6">
         <button onClick={copyLink} className="flex items-center gap-2 rounded-xl px-4 py-2.5 mono text-xs"
@@ -1375,39 +1465,56 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
         </button>
       </div>
 
-      <Card className="p-6 mb-4">
-        <SectionLabel>The brief</SectionLabel>
-        <div className="text-sm leading-relaxed whitespace-pre-line mt-2">{t.brief?.creativeBrief}</div>
-      </Card>
-
-      {t.brief?.deliverables?.length > 0 && (
+      <div className="pr-print-area">
         <Card className="p-6 mb-4">
-          <SectionLabel>Deliverables</SectionLabel>
-          <ul className="mt-2 space-y-1">
-            {t.brief.deliverables.map((d, i) => <li key={i} className="text-sm flex gap-2"><span>•</span><span>{d}</span></li>)}
-          </ul>
+          <SectionLabel>The brief</SectionLabel>
+          <div className="text-sm leading-relaxed whitespace-pre-line mt-2">{t.brief?.creativeBrief}</div>
         </Card>
-      )}
 
-      {t.brief?.keyRequirements?.length > 0 && (
-        <Card className="p-6 mb-4">
-          <SectionLabel>Key requirements</SectionLabel>
-          <ul className="mt-2 space-y-1">
-            {t.brief.keyRequirements.map((d, i) => <li key={i} className="text-sm flex gap-2"><span>•</span><span>{d}</span></li>)}
-          </ul>
-        </Card>
-      )}
+        {t.brief?.deliverables?.length > 0 && (
+          <Card className="p-6 mb-4">
+            <SectionLabel>Deliverables</SectionLabel>
+            <ul className="mt-2 space-y-1">
+              {t.brief.deliverables.map((d, i) => <li key={i} className="text-sm flex gap-2"><span>•</span><span>{d}</span></li>)}
+            </ul>
+          </Card>
+        )}
 
-      {(t.assigneeName || t.assigneeEmail) && (
-        <Card className="p-6 mb-4">
-          <SectionLabel>Assigned to</SectionLabel>
-          <div className="text-sm mt-2">{t.assigneeName || "—"}{t.assigneeEmail ? ` · ${t.assigneeEmail}` : ""}</div>
-        </Card>
-      )}
+        {t.brief?.keyRequirements?.length > 0 && (
+          <Card className="p-6 mb-4">
+            <SectionLabel>Key requirements</SectionLabel>
+            <ul className="mt-2 space-y-1">
+              {t.brief.keyRequirements.map((d, i) => <li key={i} className="text-sm flex gap-2"><span>•</span><span>{d}</span></li>)}
+            </ul>
+          </Card>
+        )}
 
-      <button onClick={() => remove(t.id)} className="inline-flex items-center gap-1.5 text-sm mt-2" style={{ color: "var(--muted)" }}>
-        <Trash2 className="w-3.5 h-3.5" /> Delete
-      </button>
+        {(t.problem || t.audience || t.insights) && (
+          <Card className="p-6 mb-4">
+            <SectionLabel>Context</SectionLabel>
+            {t.problem && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Problem: </span>{t.problem}</div>}
+            {t.audience && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Audience: </span>{t.audience}</div>}
+            {t.insights && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Insights: </span>{t.insights}</div>}
+          </Card>
+        )}
+
+        {(t.workingFiles || t.workingDeck || t.extraLinks) && (
+          <Card className="p-6 mb-4">
+            <SectionLabel>Files & links</SectionLabel>
+            {t.workingFiles && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Working files: </span>{t.workingFiles}</div>}
+            {t.workingDeck && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Working deck: </span>{t.workingDeck}</div>}
+            {t.extraLinks && <div className="text-sm mt-2 whitespace-pre-line"><span style={{ color: "var(--muted)" }}>Extra links: </span>{t.extraLinks}</div>}
+          </Card>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mt-5">
+        <Btn variant="secondary" onClick={downloadBrief}><Download className="w-4 h-4" /> Download PDF</Btn>
+        <Btn variant="secondary" onClick={() => downloadTaskBriefDocx(t, t.brief, (t.type || []).join(", "))}><FileText className="w-4 h-4" /> Download Word doc</Btn>
+        <button onClick={() => remove(t.id)} className="inline-flex items-center gap-1.5 text-sm ml-auto" style={{ color: "var(--muted)" }}>
+          <Trash2 className="w-3.5 h-3.5" /> Delete
+        </button>
+      </div>
     </div>
   );
 }
