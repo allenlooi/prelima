@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, fetchTaskBriefs, syncTaskBriefs, ensureProfile, saveWorkspaceName } from "./db.js";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } from "docx";
 
 /* ------------------------------------------------------------------ */
 /* Theme                                                               */
@@ -127,6 +127,19 @@ function parseJSON(text) {
 
 const downloadBrief = () => window.print();
 
+async function generateAvatarImage(prompt) {
+  try {
+    const res = await fetch("/api/generate-avatar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    const data = await res.json();
+    if (data.skipped || !data.data || !data.data[0]) return null;
+    return data.data[0].url;
+  } catch { return null; }
+}
+
 async function downloadTaskBriefDocx(a, result, typeLabel) {
   const bullets = (items) => (items || []).map(t => new Paragraph({ text: t, bullet: { level: 0 } }));
   const detail = (label, value) => new Paragraph({
@@ -134,10 +147,34 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
     children: [new TextRun({ text: `${label}: `, bold: true }), new TextRun(value || "—")],
   });
 
+  const problemLabel = (a.problem || []).map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
+  const locationLabel = (a.audienceLocation || []).map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
+  const hobbyLabel = (a.audienceHobbies || []).map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
+  const audienceSummary = [
+    (a.audienceGender || []).length ? `${a.audienceAge}y ${a.audienceGender.join("/")}` : "",
+    locationLabel, hobbyLabel,
+  ].filter(Boolean).join(" · ");
+
+  const avatarImages = [];
+  for (const av of (a.audienceAvatars || [])) {
+    if (!av.url) continue;
+    try {
+      const imgRes = await fetch(av.url);
+      const buf = await imgRes.arrayBuffer();
+      avatarImages.push(new ImageRun({ data: buf, transformation: { width: 120, height: 120 } }));
+    } catch { /* image URL may have expired — skip rather than fail the whole export */ }
+  }
+
+  const insightParagraphs = (a.insightQuestions || [])
+    .map((q, i) => ((a.insightAnswers || [])[i] ? detail(q, a.insightAnswers[i]) : null))
+    .filter(Boolean);
+
   const doc = new Document({
     sections: [{
       children: [
         new Paragraph({ text: a.title || "Task brief", heading: HeadingLevel.TITLE }),
+        ...(avatarImages.length ? [new Paragraph({ children: avatarImages, spacing: { after: 100 } })] : []),
+        ...(a.audiencePersonaQuestion ? [new Paragraph({ children: [new TextRun({ text: `"${a.audiencePersonaQuestion}"`, italics: true })], spacing: { after: 200 } })] : []),
         new Paragraph({ text: (result && result.creativeBrief) || "", spacing: { after: 200 } }),
         ...(result && result.deliverables && result.deliverables.length ? [
           new Paragraph({ text: "Deliverables", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
@@ -150,9 +187,9 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
         new Paragraph({ text: "Details", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
         detail("Type", typeLabel),
         detail("Deadline", a.deadline),
-        detail("Problem", a.problem),
-        detail("Audience", a.audience),
-        detail("Insights", a.insights),
+        detail("Problem", problemLabel),
+        detail("Audience", audienceSummary),
+        ...insightParagraphs,
         detail("References", a.references),
         detail("Avoid", a.referencesAvoid),
         detail("Working files", a.workingFiles),
@@ -231,10 +268,18 @@ const blankAnswers = {
 };
 
 const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web Dev", "Ads management", "Other"];
+const PROBLEM_OPTIONS = ["Brand awareness", "Sales / conversions", "Product launch", "Customer retention", "Rebrand / repositioning", "Education / explaining the product", "Community engagement", "Other"];
+const LOCATIONS = ["Kuala Lumpur", "Selangor", "Penang", "Johor Bahru", "Sabah", "Sarawak", "Nationwide", "Other"];
+const GENDERS = ["Male", "Female"];
+const HOBBIES = ["Fitness", "Travel", "Fashion & beauty", "Food & dining", "Technology", "Gaming", "Music", "Reading", "Outdoors", "Wellness", "Other"];
 
 const blankTaskAnswers = {
   title: "", type: [], typeOther: "", description: "",
-  problem: "", audience: "", insights: "",
+  problem: [], problemOther: "",
+  audienceAge: 30, audienceLocation: [], audienceLocationOther: "",
+  audienceGender: [], audienceHobbies: [], audienceHobbiesOther: "",
+  audienceAvatars: [], audiencePersonaQuestion: "",
+  insightQuestions: [], insightAnswers: [],
   references: "", referencesAvoid: "",
   workingFiles: "", workingDeck: "", extraLinks: "",
   deadline: "",
@@ -715,6 +760,8 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const [result, setResult] = useState(null);
   const [link] = useState(() => `prelima.app/t/${Math.random().toString(36).slice(2, 6)}`);
   const [copied, setCopied] = useState(false);
+  const [personaStage, setPersonaStage] = useState(() => (blankTaskAnswers.audienceAvatars.length ? "revealed" : "form"));
+  const [insightsLoading, setInsightsLoading] = useState(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   const toggle = (key, val) => set({ [key]: a[key].includes(val) ? a[key].filter(v => v !== val) : [...a[key], val] });
@@ -737,6 +784,61 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const total = steps.length;
   const pct = step < 0 ? 0 : Math.round((step / total) * 100);
   const typeLabel = a.type.map(t => t === "Other" ? (a.typeOther || "Other") : t).join(", ");
+  const problemLabel = a.problem.map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
+  const locationLabel = a.audienceLocation.map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
+  const hobbyLabel = a.audienceHobbies.map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
+  const audienceSummary = [
+    a.audienceGender.length ? `${a.audienceAge}y ${a.audienceGender.join("/")}` : "",
+    locationLabel, hobbyLabel,
+  ].filter(Boolean).join(" · ");
+
+  // Generate 2-3 tailored clarifying questions once the user reaches Insights, so it's
+  // guided instead of a blank box — most people know the context, just not how to phrase it.
+  useEffect(() => {
+    if (steps[idx]?.id !== "insights" || a.insightQuestions.length > 0 || insightsLoading) return;
+    setInsightsLoading(true);
+    (async () => {
+      try {
+        const text = await callClaude([{
+          role: "user",
+          content: `You're helping a freelancer write a creative brief. Based on what they've shared so far, ask 3 short, specific clarifying questions that would surface useful context they know but haven't put into words yet (e.g. what's worked before, what hasn't, relevant data or feedback). Keep each under 12 words.\n\nTitle: ${a.title}\nType: ${typeLabel}\nDescription: ${a.description}\nProblem: ${problemLabel || "—"}\n\nRespond ONLY with JSON, no preamble: {"questions": ["...", "...", "..."]}`
+        }]);
+        const j = parseJSON(text);
+        if (j && Array.isArray(j.questions) && j.questions.length) {
+          set({ insightQuestions: j.questions, insightAnswers: j.questions.map(() => "") });
+        } else throw new Error("bad json");
+      } catch {
+        const fallback = ["What's worked well before?", "What hasn't worked?", "Any data or feedback worth sharing?"];
+        set({ insightQuestions: fallback, insightAnswers: fallback.map(() => "") });
+      }
+      setInsightsLoading(false);
+    })();
+  }, [idx]);
+
+  async function generatePersona() {
+    setPersonaStage("generating");
+    const genders = a.audienceGender.length ? a.audienceGender : ["person"];
+    const hobbies = hobbyLabel || "general interests";
+
+    const avatars = await Promise.all(genders.map(async (gender) => {
+      const prompt = `A cute 3D Pixar-style chibi character illustration of a ${a.audienceAge}-year-old ${gender.toLowerCase()}, big head and small body proportions, big expressive friendly eyes, warm smile, standing pose, holding or wearing something related to an interest in ${hobbies}, plain white background, soft studio lighting, high quality 3D render, no text, no logos, no specific ethnicity or religious symbols`;
+      const url = await generateAvatarImage(prompt);
+      return { gender, url };
+    }));
+
+    let question = "";
+    try {
+      const text = await callClaude([{
+        role: "user",
+        content: `You are roleplaying as a target customer persona for a brand/product based on this creative brief.\n\nBrief title: ${a.title}\nDescription: ${a.description}\nProblem the brief addresses: ${problemLabel || a.description}\n\nPersona: ${a.audienceAge}-year-old, ${genders.join(" and ")}, based in ${locationLabel || "Malaysia"}, interested in ${hobbies}.\n\nWrite ONE short, natural, first-person question this persona would genuinely ask about the product, reflecting their specific problem or curiosity — like a real customer asking a friend. Under 20 words.\n\nRespond ONLY with JSON, no preamble: {"question": "..."}`
+      }]);
+      const j = parseJSON(text);
+      if (j && j.question) question = j.question;
+    } catch { /* leave blank, non-fatal */ }
+
+    set({ audienceAvatars: avatars, audiencePersonaQuestion: question });
+    setPersonaStage("revealed");
+  }
 
   function finish(brief) {
     setResult(brief);
@@ -745,7 +847,11 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
       id: "t" + Date.now(),
       title: a.title || "Untitled brief",
       type: a.type, typeOther: a.typeOther, description: a.description,
-      problem: a.problem, audience: a.audience, insights: a.insights,
+      problem: a.problem, problemOther: a.problemOther,
+      audienceAge: a.audienceAge, audienceLocation: a.audienceLocation, audienceLocationOther: a.audienceLocationOther,
+      audienceGender: a.audienceGender, audienceHobbies: a.audienceHobbies, audienceHobbiesOther: a.audienceHobbiesOther,
+      audienceAvatars: a.audienceAvatars, audiencePersonaQuestion: a.audiencePersonaQuestion,
+      insightQuestions: a.insightQuestions, insightAnswers: a.insightAnswers,
       references: a.references, referencesAvoid: a.referencesAvoid,
       workingFiles: a.workingFiles, workingDeck: a.workingDeck, extraLinks: a.extraLinks,
       deadline: a.deadline,
@@ -766,7 +872,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
       throw new Error("bad json");
     } catch {
       finish({
-        creativeBrief: `${a.description}${a.problem ? `\n\nProblem: ${a.problem}` : ""}${a.audience ? `\n\nAudience: ${a.audience}` : ""}\n\nType: ${typeLabel || "—"}. Deadline: ${a.deadline || "—"}.`,
+        creativeBrief: `${a.description}${problemLabel ? `\n\nProblem: ${problemLabel}` : ""}${audienceSummary ? `\n\nAudience: ${audienceSummary}` : ""}\n\nType: ${typeLabel || "—"}. Deadline: ${a.deadline || "—"}.`,
         keyRequirements: [], deliverables: [],
         _fallback: true,
       });
@@ -778,6 +884,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     if (s === "title") return a.title.trim().length > 0;
     if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || a.typeOther.trim().length > 0);
     if (s === "description") return a.description.trim().length > 0;
+    if (s === "problem") return !a.problem.includes("Other") || a.problemOther.trim().length > 0;
     return true;
   };
 
@@ -796,6 +903,13 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
             <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Brief ready.</h2>
             <p className="mb-8" style={{ color: "var(--muted)" }}>Share the link below with whoever's doing the work, or download a copy.</p>
+            {a.audienceAvatars.length > 0 && (
+              <div className="flex flex-wrap gap-4 mb-6">
+                {a.audienceAvatars.map((av, i) => av.url && (
+                  <img key={i} src={av.url} alt={av.gender} className="rounded-2xl" style={{ width: 140, height: 140, objectFit: "cover", border: "1px solid var(--line)" }} />
+                ))}
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3 mb-3">
               <button onClick={() => { navigator.clipboard?.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                 className="flex items-center gap-2 rounded-xl px-4 py-3 mono text-xs"
@@ -811,6 +925,12 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             </div>
             <div className="pr-print-area pr-print-only">
               <h1 className="display text-2xl font-semibold mb-4">{a.title || "Task brief"}</h1>
+              {a.audienceAvatars.length > 0 && (
+                <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                  {a.audienceAvatars.map((av, i) => av.url && <img key={i} src={av.url} alt={av.gender} style={{ width: 120, height: 120, objectFit: "cover" }} />)}
+                </div>
+              )}
+              {a.audiencePersonaQuestion && <p style={{ fontStyle: "italic" }}>“{a.audiencePersonaQuestion}”</p>}
               <p style={{ whiteSpace: "pre-wrap" }}>{result && result.creativeBrief ? result.creativeBrief : ""}</p>
               {result && result.deliverables && result.deliverables.length > 0 && (<>
                 <h2 className="display text-lg font-semibold mt-6 mb-2">Deliverables</h2>
@@ -823,9 +943,9 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
               <h2 className="display text-lg font-semibold mt-6 mb-2">Details</h2>
               <p>Type: {typeLabel || "—"}</p>
               <p>Deadline: {a.deadline || "—"}</p>
-              <p>Problem: {a.problem || "—"}</p>
-              <p>Audience: {a.audience || "—"}</p>
-              <p>Insights: {a.insights || "—"}</p>
+              <p>Problem: {problemLabel || "—"}</p>
+              <p>Audience: {audienceSummary || "—"}</p>
+              {a.insightQuestions.map((q, i) => a.insightAnswers[i] && <p key={i}>{q} {a.insightAnswers[i]}</p>)}
               <p>References: {a.references || "—"}</p>
               <p>Avoid: {a.referencesAvoid || "—"}</p>
               <p>Working files: {a.workingFiles || "—"}</p>
@@ -885,20 +1005,104 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "problem" && (
-          <Q idx={idx} total={total} title="What problem are we trying to solve?" hint="Optional — the 'why' behind this task helps whoever's doing the work make better calls.">
-            <VoiceTA value={a.problem} onChange={v => set({ problem: v })} placeholder="We're trying to…" cleanHint="problem statement" />
+          <Q idx={idx} total={total} title="What problem are we trying to solve?" hint="Optional — pick everything that applies.">
+            <div className="flex flex-wrap gap-2.5">
+              {PROBLEM_OPTIONS.map(p => <Chip key={p} active={a.problem.includes(p)} onClick={() => toggle("problem", p)}>{p}</Chip>)}
+            </div>
+            {a.problem.includes("Other") && (
+              <input type="text" value={a.problemOther} onChange={e => set({ problemOther: e.target.value })}
+                placeholder="Tell us more…" className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            )}
           </Q>
         )}
 
         {s === "audience" && (
-          <Q idx={idx} total={total} title="Who's the target audience?" hint={'Optional. Example: "Women 24–38 within 5km of Bangsar who currently work out at gyms."'}>
-            <VoiceTA value={a.audience} onChange={v => set({ audience: v })} placeholder="This is for…" rows={4} cleanHint="target audience description" />
+          <Q idx={idx} total={total} title="Who's the target audience?" hint="Optional — build a quick persona and we'll generate an avatar of them.">
+            {personaStage !== "revealed" ? (
+              <div className="space-y-6">
+                <div>
+                  <SectionLabel>Age</SectionLabel>
+                  <Slider value={a.audienceAge} min={13} max={70} onChange={v => set({ audienceAge: v })} format={v => `${v} years old`} />
+                </div>
+                <div>
+                  <SectionLabel>Location</SectionLabel>
+                  <div className="flex flex-wrap gap-2.5">
+                    {LOCATIONS.map(l => <Chip key={l} active={a.audienceLocation.includes(l)} onClick={() => toggle("audienceLocation", l)}>{l}</Chip>)}
+                  </div>
+                  {a.audienceLocation.includes("Other") && (
+                    <input type="text" value={a.audienceLocationOther} onChange={e => set({ audienceLocationOther: e.target.value })}
+                      placeholder="Where else?" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
+                  )}
+                </div>
+                <div>
+                  <SectionLabel>Gender</SectionLabel>
+                  <div className="flex flex-wrap gap-2.5">
+                    {GENDERS.map(g => <Chip key={g} active={a.audienceGender.includes(g)} onClick={() => toggle("audienceGender", g)}>{g}</Chip>)}
+                  </div>
+                </div>
+                <div>
+                  <SectionLabel>Hobbies & interests</SectionLabel>
+                  <div className="flex flex-wrap gap-2.5">
+                    {HOBBIES.map(h => <Chip key={h} active={a.audienceHobbies.includes(h)} onClick={() => toggle("audienceHobbies", h)}>{h}</Chip>)}
+                  </div>
+                  {a.audienceHobbies.includes("Other") && (
+                    <input type="text" value={a.audienceHobbiesOther} onChange={e => set({ audienceHobbiesOther: e.target.value })}
+                      placeholder="What else are they into?" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
+                  )}
+                </div>
+                <Btn onClick={generatePersona} disabled={a.audienceGender.length === 0 || personaStage === "generating"}>
+                  {personaStage === "generating" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  {personaStage === "generating" ? "Bringing them to life…" : "Generate persona"}
+                </Btn>
+              </div>
+            ) : (
+              <div>
+                <div className="flex flex-wrap gap-4 mb-5">
+                  {a.audienceAvatars.map((av, i) => (
+                    <div key={i} className="rounded-2xl overflow-hidden fade" style={{ width: 160, height: 160, border: "1px solid var(--line)" }}>
+                      {av.url ? (
+                        <img src={av.url} alt={av.gender} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-1" style={{ background: "var(--surface-2)" }}>
+                          <Users className="w-6 h-6" style={{ color: "var(--muted)" }} />
+                          <span className="mono text-[10px]" style={{ color: "var(--muted)" }}>{av.gender}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {a.audiencePersonaQuestion && (
+                  <div className="rounded-2xl p-5 mb-4" style={{ background: "var(--accent-soft)" }}>
+                    <p className="text-base italic" style={{ color: "var(--accent)" }}>&ldquo;{a.audiencePersonaQuestion}&rdquo;</p>
+                  </div>
+                )}
+                <button onClick={() => setPersonaStage("form")} className="text-sm underline underline-offset-4" style={{ color: "var(--muted)" }}>
+                  Edit persona
+                </button>
+              </div>
+            )}
           </Q>
         )}
 
         {s === "insights" && (
-          <Q idx={idx} total={total} title="Any insights that could help?" hint="Optional — data, past learnings, or context that shapes the work.">
-            <TA value={a.insights} onChange={v => set({ insights: v })} placeholder="What we've learned so far…" rows={4} />
+          <Q idx={idx} total={total} title="Any insights that could help?" hint="Optional — a few quick questions based on what you've told us so far.">
+            {insightsLoading ? (
+              <div className="flex items-center gap-2 text-sm" style={{ color: "var(--muted)" }}>
+                <Loader2 className="w-4 h-4 animate-spin" /> Thinking of a few questions…
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {a.insightQuestions.map((q, i) => (
+                  <div key={i}>
+                    <SectionLabel>{q}</SectionLabel>
+                    <input type="text" value={a.insightAnswers[i] || ""} onChange={e => {
+                        const next = [...a.insightAnswers]; next[i] = e.target.value; set({ insightAnswers: next });
+                      }}
+                      placeholder="Optional…" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus={i === 0} />
+                  </div>
+                ))}
+              </div>
+            )}
           </Q>
         )}
 
@@ -946,9 +1150,9 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                 ["Title", a.title, 0],
                 ["Type", typeLabel || "—", 1],
                 ["Description", a.description, 2],
-                ["Problem", a.problem || "—", 3],
-                ["Audience", a.audience || "—", 4],
-                ["Insights", a.insights || "—", 5],
+                ["Problem", problemLabel || "—", 3],
+                ["Audience", audienceSummary || "—", 4],
+                ["Insights", a.insightAnswers.filter(Boolean).length > 0 ? `${a.insightAnswers.filter(Boolean).length} answered` : "—", 5],
                 ["Deadline", a.deadline || "—", 8],
               ].map(([k, v, go]) => (
                 <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
@@ -1446,6 +1650,13 @@ function CreativeBriefsBoard({ briefs, setBriefs, openBrief, setOpenBrief, onNew
 function CreativeBriefViewer({ brief: t, onBack, remove }) {
   const [copied, setCopied] = useState(false);
   const copyLink = () => { navigator.clipboard?.writeText(t.link); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+  const problemLabel = (t.problem || []).map(p => p === "Other" ? (t.problemOther || "Other") : p).join(", ");
+  const locationLabel = (t.audienceLocation || []).map(l => l === "Other" ? (t.audienceLocationOther || "Other") : l).join(", ");
+  const hobbyLabel = (t.audienceHobbies || []).map(h => h === "Other" ? (t.audienceHobbiesOther || "Other") : h).join(", ");
+  const audienceSummary = [
+    (t.audienceGender || []).length ? `${t.audienceAge}y ${t.audienceGender.join("/")}` : "",
+    locationLabel, hobbyLabel,
+  ].filter(Boolean).join(" · ");
   return (
     <div className="fade max-w-2xl">
       <button onClick={onBack} className="mono text-[11px] uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
@@ -1489,12 +1700,26 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
           </Card>
         )}
 
-        {(t.problem || t.audience || t.insights) && (
+        {t.audienceAvatars?.length > 0 && (
+          <Card className="p-6 mb-4">
+            <SectionLabel>Persona</SectionLabel>
+            <div className="flex flex-wrap gap-4 mt-3 mb-3">
+              {t.audienceAvatars.map((av, i) => av.url && (
+                <img key={i} src={av.url} alt={av.gender} className="rounded-2xl" style={{ width: 120, height: 120, objectFit: "cover", border: "1px solid var(--line)" }} />
+              ))}
+            </div>
+            {t.audiencePersonaQuestion && <p className="text-sm italic" style={{ color: "var(--accent)" }}>&ldquo;{t.audiencePersonaQuestion}&rdquo;</p>}
+          </Card>
+        )}
+
+        {(problemLabel || audienceSummary || t.insightAnswers?.some(Boolean)) && (
           <Card className="p-6 mb-4">
             <SectionLabel>Context</SectionLabel>
-            {t.problem && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Problem: </span>{t.problem}</div>}
-            {t.audience && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Audience: </span>{t.audience}</div>}
-            {t.insights && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Insights: </span>{t.insights}</div>}
+            {problemLabel && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
+            {audienceSummary && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
+            {(t.insightQuestions || []).map((q, i) => (t.insightAnswers || [])[i] && (
+              <div key={i} className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>{q} </span>{t.insightAnswers[i]}</div>
+            ))}
           </Card>
         )}
 
