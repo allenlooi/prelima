@@ -152,7 +152,6 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
     sections: [{
       children: [
         new Paragraph({ text: a.title || "Task brief", heading: HeadingLevel.TITLE }),
-        ...(a.audiencePersonaQuestion ? [new Paragraph({ children: [new TextRun({ text: `"${a.audiencePersonaQuestion}"`, italics: true })], spacing: { after: 200 } })] : []),
         new Paragraph({ text: (result && result.creativeBrief) || "", spacing: { after: 200 } }),
         ...(result && result.deliverables && result.deliverables.length ? [
           new Paragraph({ text: "Deliverables", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
@@ -249,7 +248,7 @@ const blankAnswers = {
 };
 
 const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web Dev", "Ads management", "Other"];
-const FORMAT_OPTIONS = ["Square (1:1)", "Portrait / Story (9:16)", "Landscape (16:9)", "A4 / Print", "Multiple sizes", "Not sure yet", "Other"];
+const FORMAT_OPTIONS = ["Square (1:1)", "Portrait (4:5)", "Portrait / Story (9:16)", "Landscape (16:9)", "A4 / Print", "Multiple sizes", "Not sure yet", "Other"];
 const PROBLEM_OPTIONS = ["Brand awareness", "Sales / conversions", "Product launch", "Customer retention", "Rebrand / repositioning", "Education / explaining the product", "Community engagement", "Other"];
 const AGE_BRACKETS = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
 const LOCATIONS = ["Malaysia", "Singapore", "Southeast Asia", "Asia Pacific", "Europe", "North America", "Global / Worldwide", "Other"];
@@ -264,7 +263,6 @@ const blankTaskAnswers = {
   problem: [], problemOther: "",
   audienceAgeRange: [], audienceLocation: [], audienceLocationOther: "",
   audienceGender: [], audienceHobbies: [], audienceHobbiesOther: "",
-  audiencePersonaQuestion: "",
   insightQuestions: [], insightAnswers: [],
   references: "", referencesAvoid: "",
   workingFiles: "", workingDeck: "", extraLinks: "",
@@ -746,7 +744,6 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const [result, setResult] = useState(null);
   const [link] = useState(() => `prelima.app/t/${Math.random().toString(36).slice(2, 6)}`);
   const [copied, setCopied] = useState(false);
-  const [personaStage, setPersonaStage] = useState(() => (blankTaskAnswers.audiencePersonaQuestion ? "revealed" : "form"));
   const [insightsLoading, setInsightsLoading] = useState(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
@@ -782,8 +779,10 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     locationLabel, hobbyLabel,
   ].filter(Boolean).join(" · ");
 
-  // Generate 2-3 tailored clarifying questions once the user reaches Insights, so it's
+  // Generate 3 tailored quick-fire questions once the user reaches Insights, so it's
   // guided instead of a blank box — most people know the context, just not how to phrase it.
+  // The questions lean on the audience persona: their relationship with the problem,
+  // what's been tried before, why they'd pick this brand.
   useEffect(() => {
     if (steps[idx]?.id !== "insights" || a.insightQuestions.length > 0 || insightsLoading) return;
     setInsightsLoading(true);
@@ -791,39 +790,19 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
       try {
         const text = await callClaude([{
           role: "user",
-          content: `You're helping a freelancer write a creative brief. Based on what they've shared so far, ask 3 short, specific clarifying questions that would surface useful context they know but haven't put into words yet (e.g. what's worked before, what hasn't, relevant data or feedback). Keep each under 12 words.\n\nTitle: ${a.title}\nType: ${typeLabel}\nDescription: ${a.description}\nProblem: ${problemLabel || "—"}\n\nRespond ONLY with JSON, no preamble: {"questions": ["...", "...", "..."]}`
+          content: `You're helping someone write a creative brief. Based on what they've shared so far, ask 3 short, specific quick-fire questions that surface useful context they know but haven't put into words yet. Cover angles like: the audience's relationship with the problem, what's been tried before (worked or didn't), and why this audience would choose this brand over alternatives. Make each question concrete to THIS brand and audience, under 14 words.\n\nBrand: ${a.brandName || "—"}${a.brandWebsite ? ` (${a.brandWebsite})` : ""}\nTitle: ${a.title}\nType: ${typeLabel}\nDescription: ${a.description}\nProblem: ${problemLabel || "—"}\nAudience: ${audienceSummary || "—"}\n\nRespond ONLY with JSON, no preamble: {"questions": ["...", "...", "..."]}`
         }]);
         const j = parseJSON(text);
         if (j && Array.isArray(j.questions) && j.questions.length) {
           set({ insightQuestions: j.questions, insightAnswers: j.questions.map(() => "") });
         } else throw new Error("bad json");
       } catch {
-        const fallback = ["What's worked well before?", "What hasn't worked?", "Any data or feedback worth sharing?"];
+        const fallback = ["What's the audience's relationship with this problem?", "What's been tried before — and did it work?", "Why would they pick you over alternatives?"];
         set({ insightQuestions: fallback, insightAnswers: fallback.map(() => "") });
       }
       setInsightsLoading(false);
     })();
   }, [idx]);
-
-  async function generatePersona() {
-    setPersonaStage("generating");
-    const genders = a.audienceGender.length ? a.audienceGender : ["person"];
-    const hobbies = hobbyLabel || "general interests";
-    const age = ageRangeLabel || "adult";
-
-    let question = "";
-    try {
-      const text = await callClaude([{
-        role: "user",
-        content: `You are roleplaying as a target customer persona for a brand/product based on this creative brief.\n\nBrief title: ${a.title}\nDescription: ${a.description}\nProblem the brief addresses: ${problemLabel || a.description}\n\nPersona: ${age} years old, ${genders.join(" and ")}, based in ${locationLabel || "Malaysia"}, interested in ${hobbies}.\n\nWrite ONE short, natural, first-person question this persona would genuinely ask about the product, reflecting their specific problem or curiosity — like a real customer asking a friend. Under 20 words.\n\nRespond ONLY with JSON, no preamble: {"question": "..."}`
-      }]);
-      const j = parseJSON(text);
-      if (j && j.question) question = j.question;
-    } catch { /* leave blank, non-fatal */ }
-
-    set({ audiencePersonaQuestion: question });
-    setPersonaStage("revealed");
-  }
 
   function finish(brief) {
     setResult(brief);
@@ -837,7 +816,6 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
       problem: a.problem, problemOther: a.problemOther,
       audienceAgeRange: a.audienceAgeRange, audienceLocation: a.audienceLocation, audienceLocationOther: a.audienceLocationOther,
       audienceGender: a.audienceGender, audienceHobbies: a.audienceHobbies, audienceHobbiesOther: a.audienceHobbiesOther,
-      audiencePersonaQuestion: a.audiencePersonaQuestion,
       insightQuestions: a.insightQuestions, insightAnswers: a.insightAnswers,
       references: a.references, referencesAvoid: a.referencesAvoid,
       workingFiles: a.workingFiles, workingDeck: a.workingDeck, extraLinks: a.extraLinks,
@@ -907,7 +885,6 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             </div>
             <div className="pr-print-area pr-print-only">
               <h1 className="display text-2xl font-semibold mb-4">{a.title || "Task brief"}</h1>
-              {a.audiencePersonaQuestion && <p style={{ fontStyle: "italic" }}>“{a.audiencePersonaQuestion}”</p>}
               <p style={{ whiteSpace: "pre-wrap" }}>{result && result.creativeBrief ? result.creativeBrief : ""}</p>
               {result && result.deliverables && result.deliverables.length > 0 && (<>
                 <h2 className="display text-lg font-semibold mt-6 mb-2">Deliverables</h2>
@@ -1023,58 +1000,41 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "audience" && (
-          <Q idx={idx} total={total} title="Who's the target audience?" hint="Optional — build a quick persona and we'll suggest a question they might ask.">
-            {personaStage !== "revealed" ? (
-              <div className="space-y-6">
-                <div>
-                  <SectionLabel>Age range</SectionLabel>
-                  <div className="flex flex-wrap gap-2.5">
-                    {AGE_BRACKETS.map(r => <Chip key={r} active={a.audienceAgeRange.includes(r)} onClick={() => toggle("audienceAgeRange", r)}>{r}</Chip>)}
-                  </div>
-                </div>
-                <div>
-                  <SectionLabel>Location</SectionLabel>
-                  <div className="flex flex-wrap gap-2.5">
-                    {LOCATIONS.map(l => <Chip key={l} active={a.audienceLocation.includes(l)} onClick={() => toggle("audienceLocation", l)}>{l}</Chip>)}
-                  </div>
-                  {a.audienceLocation.includes("Other") && (
-                    <input type="text" value={a.audienceLocationOther} onChange={e => set({ audienceLocationOther: e.target.value })}
-                      placeholder="Where else?" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
-                  )}
-                </div>
-                <div>
-                  <SectionLabel>Gender</SectionLabel>
-                  <div className="flex flex-wrap gap-2.5">
-                    {GENDERS.map(g => <Chip key={g} active={a.audienceGender.includes(g)} onClick={() => toggle("audienceGender", g)}>{g}</Chip>)}
-                  </div>
-                </div>
-                <div>
-                  <SectionLabel>Hobbies & interests</SectionLabel>
-                  <div className="flex flex-wrap gap-2.5">
-                    {HOBBIES.map(h => <Chip key={h} active={a.audienceHobbies.includes(h)} onClick={() => toggle("audienceHobbies", h)}>{h}</Chip>)}
-                  </div>
-                  {a.audienceHobbies.includes("Other") && (
-                    <input type="text" value={a.audienceHobbiesOther} onChange={e => set({ audienceHobbiesOther: e.target.value })}
-                      placeholder="What else are they into?" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
-                  )}
-                </div>
-                <Btn onClick={generatePersona} disabled={a.audienceGender.length === 0 || personaStage === "generating"}>
-                  {personaStage === "generating" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  {personaStage === "generating" ? "Thinking…" : "Generate persona"}
-                </Btn>
-              </div>
-            ) : (
+          <Q idx={idx} total={total} title="Who's the target audience?" hint="Optional — a quick sketch of who this is for. We'll use it to ask smarter questions next.">
+            <div className="space-y-6">
               <div>
-                {a.audiencePersonaQuestion && (
-                  <div className="rounded-2xl p-5 mb-4" style={{ background: "var(--accent-soft)" }}>
-                    <p className="text-base italic" style={{ color: "var(--accent)" }}>&ldquo;{a.audiencePersonaQuestion}&rdquo;</p>
-                  </div>
-                )}
-                <button onClick={() => setPersonaStage("form")} className="text-sm underline underline-offset-4" style={{ color: "var(--muted)" }}>
-                  Edit persona
-                </button>
+                <SectionLabel>Age range</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {AGE_BRACKETS.map(r => <Chip key={r} active={a.audienceAgeRange.includes(r)} onClick={() => toggle("audienceAgeRange", r)}>{r}</Chip>)}
+                </div>
               </div>
-            )}
+              <div>
+                <SectionLabel>Location</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {LOCATIONS.map(l => <Chip key={l} active={a.audienceLocation.includes(l)} onClick={() => toggle("audienceLocation", l)}>{l}</Chip>)}
+                </div>
+                {a.audienceLocation.includes("Other") && (
+                  <input type="text" value={a.audienceLocationOther} onChange={e => set({ audienceLocationOther: e.target.value })}
+                    placeholder="Where else?" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
+                )}
+              </div>
+              <div>
+                <SectionLabel>Gender</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {GENDERS.map(g => <Chip key={g} active={a.audienceGender.includes(g)} onClick={() => toggle("audienceGender", g)}>{g}</Chip>)}
+                </div>
+              </div>
+              <div>
+                <SectionLabel>Hobbies & interests</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {HOBBIES.map(h => <Chip key={h} active={a.audienceHobbies.includes(h)} onClick={() => toggle("audienceHobbies", h)}>{h}</Chip>)}
+                </div>
+                {a.audienceHobbies.includes("Other") && (
+                  <input type="text" value={a.audienceHobbiesOther} onChange={e => set({ audienceHobbiesOther: e.target.value })}
+                    placeholder="What else are they into?" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
+                )}
+              </div>
+            </div>
           </Q>
         )}
 
@@ -1695,13 +1655,6 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
             <ul className="mt-2 space-y-1">
               {t.brief.keyRequirements.map((d, i) => <li key={i} className="text-sm flex gap-2"><span>•</span><span>{d}</span></li>)}
             </ul>
-          </Card>
-        )}
-
-        {t.audiencePersonaQuestion && (
-          <Card className="p-6 mb-4">
-            <SectionLabel>Persona</SectionLabel>
-            <p className="text-sm italic mt-2" style={{ color: "var(--accent)" }}>&ldquo;{t.audiencePersonaQuestion}&rdquo;</p>
           </Card>
         )}
 
