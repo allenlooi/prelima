@@ -135,7 +135,7 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
   });
 
   const problemLabel = (a.problem || []).map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
-  const formatLabel = (a.format || []).map(f => f === "Other" ? (a.formatOther || "Other") : f).join(", ");
+  const deliverablesLabel = (a.deliverables || []).filter(d => d.format).map(d => `${d.qty}× ${d.format === "Other" ? (d.other || "Other") : d.format}`).join(", ");
   const locationLabel = (a.audienceLocation || []).map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = (a.audienceHobbies || []).map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
   const audienceSummary = [
@@ -165,7 +165,7 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
         detail("Brand", a.brandName),
         detail("Website", a.brandWebsite),
         detail("Type", typeLabel),
-        detail("Format & sizing", formatLabel),
+        detail("Deliverables", deliverablesLabel),
         detail("Deadline", a.deadline),
         detail("Problem", problemLabel),
         detail("Audience", audienceSummary),
@@ -248,7 +248,7 @@ const blankAnswers = {
 };
 
 const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web Dev", "Ads management", "Other"];
-const FORMAT_OPTIONS = ["Square (1:1)", "Portrait (4:5)", "Portrait / Story (9:16)", "Landscape (16:9)", "A4 / Print", "Multiple sizes", "Not sure yet", "Other"];
+const DELIVERABLE_FORMATS = ["Carousel (4:5)", "Carousel (1:1)", "Reel / Short video (9:16)", "Video (16:9)", "Story (9:16)", "Static post (1:1)", "Static post (4:5)", "Poster / Print (A4)", "Not sure yet", "Other"];
 const PROBLEM_OPTIONS = ["Brand awareness", "Sales / conversions", "Product launch", "Customer retention", "Rebrand / repositioning", "Education / explaining the product", "Community engagement", "Other"];
 const AGE_BRACKETS = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
 const LOCATIONS = ["Malaysia", "Singapore", "Southeast Asia", "Asia Pacific", "Europe", "North America", "Global / Worldwide", "Other"];
@@ -258,7 +258,7 @@ const HOBBIES = ["Fitness", "Travel", "Fashion & beauty", "Food & dining", "Tech
 const blankTaskAnswers = {
   brandName: "", brandWebsite: "",
   title: "", type: [], typeOther: "",
-  format: [], formatOther: "",
+  deliverables: [{ qty: 1, format: "", other: "" }],
   description: "",
   problem: [], problemOther: "",
   audienceAgeRange: [], audienceLocation: [], audienceLocationOther: "",
@@ -748,13 +748,16 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   const toggle = (key, val) => set({ [key]: a[key].includes(val) ? a[key].filter(v => v !== val) : [...a[key], val] });
+  const setDeliv = (i, patch) => set({ deliverables: a.deliverables.map((d, idx) => idx === i ? { ...d, ...patch } : d) });
+  const addDeliv = () => set({ deliverables: [...a.deliverables, { qty: 1, format: "", other: "" }] });
+  const removeDeliv = (i) => set({ deliverables: a.deliverables.filter((_, idx) => idx !== i) });
   useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
 
   const steps = useMemo(() => ([
     { id: "brand", label: "Brand or website" },
-    { id: "title", label: "What this is about" },
+    { id: "title", label: "Project name" },
     { id: "type", label: "Type of work" },
-    { id: "format", label: "Format & sizing" },
+    { id: "format", label: "Deliverables" },
     { id: "description", label: "Description" },
     { id: "problem", label: "Problem to solve" },
     { id: "audience", label: "Target audience" },
@@ -769,7 +772,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const total = steps.length;
   const pct = step < 0 ? 0 : Math.round((step / total) * 100);
   const typeLabel = a.type.map(t => t === "Other" ? (a.typeOther || "Other") : t).join(", ");
-  const formatLabel = a.format.map(f => f === "Other" ? (a.formatOther || "Other") : f).join(", ");
+  const deliverablesLabel = a.deliverables.filter(d => d.format).map(d => `${d.qty}× ${d.format === "Other" ? (d.other || "Other") : d.format}`).join(", ");
   const problemLabel = a.problem.map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
   const locationLabel = a.audienceLocation.map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = a.audienceHobbies.map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
@@ -812,7 +815,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
       title: a.title || "Untitled brief",
       brandName: a.brandName, brandWebsite: a.brandWebsite,
       type: a.type, typeOther: a.typeOther, description: a.description,
-      format: a.format, formatOther: a.formatOther,
+      deliverables: a.deliverables,
       problem: a.problem, problemOther: a.problemOther,
       audienceAgeRange: a.audienceAgeRange, audienceLocation: a.audienceLocation, audienceLocationOther: a.audienceLocationOther,
       audienceGender: a.audienceGender, audienceHobbies: a.audienceHobbies, audienceHobbiesOther: a.audienceHobbiesOther,
@@ -849,7 +852,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     if (s === "brand") return a.brandWebsite.trim().length > 0 || a.brandName.trim().length > 0;
     if (s === "title") return a.title.trim().length > 0;
     if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || a.typeOther.trim().length > 0);
-    if (s === "format") return !a.format.includes("Other") || a.formatOther.trim().length > 0;
+    if (s === "format") return a.deliverables.some(d => d.format && (d.format !== "Other" || (d.other || "").trim().length > 0));
     if (s === "description") return a.description.trim().length > 0;
     if (s === "problem") return !a.problem.includes("Other") || a.problemOther.trim().length > 0;
     return true;
@@ -898,7 +901,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
               <p>Brand: {a.brandName || "—"}</p>
               <p>Website: {a.brandWebsite || "—"}</p>
               <p>Type: {typeLabel || "—"}</p>
-              <p>Format & sizing: {formatLabel || "—"}</p>
+              <p>Deliverables: {deliverablesLabel || "—"}</p>
               <p>Deadline: {a.deadline || "—"}</p>
               <p>Problem: {problemLabel || "—"}</p>
               <p>Audience: {audienceSummary || "—"}</p>
@@ -949,7 +952,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "title" && (
-          <Q idx={idx} total={total} title="What is this project about?" hint={'A short name for this task — e.g. "Instagram carousel for product launch."'}>
+          <Q idx={idx} total={total} title="What's the name of this project?" hint={'A short name for this task — e.g. "Instagram carousel for product launch."'}>
             <input type="text" value={a.title} onChange={e => set({ title: e.target.value })}
               placeholder="Task title" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
           </Q>
@@ -969,15 +972,36 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "format" && (
-          <Q idx={idx} total={total} title="What format or sizing do you need?" hint="Pick everything that applies.">
-            <div className="flex flex-wrap gap-2.5">
-              {FORMAT_OPTIONS.map(f => <Chip key={f} active={a.format.includes(f)} onClick={() => toggle("format", f)}>{f}</Chip>)}
+          <Q idx={idx} total={total} title="What are the deliverables?" hint="How many of each, and in what format. Add a row for each type — e.g. 5× Reel (9:16), 2× Carousel.">
+            <div className="space-y-3">
+              {a.deliverables.map((d, i) => (
+                <div key={i} className="fade">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex items-center rounded-xl overflow-hidden shrink-0" style={{ border: "1px solid var(--line)", background: "var(--surface)" }}>
+                      <button onClick={() => setDeliv(i, { qty: Math.max(1, d.qty - 1) })} className="px-3 py-3 text-base leading-none" style={{ color: "var(--muted)" }} aria-label="Decrease quantity">−</button>
+                      <span className="w-8 text-center text-sm font-medium mono">{d.qty}</span>
+                      <button onClick={() => setDeliv(i, { qty: d.qty + 1 })} className="px-3 py-3 text-base leading-none" style={{ color: "var(--muted)" }} aria-label="Increase quantity">+</button>
+                    </div>
+                    <span className="mono text-sm shrink-0" style={{ color: "var(--muted)" }}>×</span>
+                    <select value={d.format} onChange={e => setDeliv(i, { format: e.target.value })}
+                      className="flex-1 rounded-xl px-4 py-3 text-sm" style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--ink)" }}>
+                      <option value="">Choose a format…</option>
+                      {DELIVERABLE_FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                    {a.deliverables.length > 1 && (
+                      <button onClick={() => removeDeliv(i)} className="p-2 shrink-0" style={{ color: "var(--muted)" }} aria-label="Remove row"><X className="w-4 h-4" /></button>
+                    )}
+                  </div>
+                  {d.format === "Other" && (
+                    <input type="text" value={d.other || ""} onChange={e => setDeliv(i, { other: e.target.value })}
+                      placeholder="Describe the format…" className="mt-2 w-full rounded-xl px-4 py-3 text-sm fade" autoFocus />
+                  )}
+                </div>
+              ))}
             </div>
-            {a.format.includes("Other") && (
-              <input type="text" value={a.formatOther} onChange={e => set({ formatOther: e.target.value })}
-                placeholder="Tell us the format or sizing…"
-                className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
-            )}
+            <button onClick={addDeliv} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
+              <Plus className="w-4 h-4" /> Add another
+            </button>
           </Q>
         )}
 
@@ -1104,7 +1128,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                 ["Brand", a.brandName || a.brandWebsite || "—", 0],
                 ["Title", a.title, 1],
                 ["Type", typeLabel || "—", 2],
-                ["Format", formatLabel || "—", 3],
+                ["Deliverables", deliverablesLabel || "—", 3],
                 ["Description", a.description, 4],
                 ["Problem", problemLabel || "—", 5],
                 ["Audience", audienceSummary || "—", 6],
@@ -1609,6 +1633,7 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
   const [copied, setCopied] = useState(false);
   const copyLink = () => { navigator.clipboard?.writeText(t.link); setCopied(true); setTimeout(() => setCopied(false), 1500); };
   const problemLabel = (t.problem || []).map(p => p === "Other" ? (t.problemOther || "Other") : p).join(", ");
+  const deliverablesLabel = (t.deliverables || []).filter(d => d.format).map(d => `${d.qty}× ${d.format === "Other" ? (d.other || "Other") : d.format}`).join(", ");
   const locationLabel = (t.audienceLocation || []).map(l => l === "Other" ? (t.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = (t.audienceHobbies || []).map(h => h === "Other" ? (t.audienceHobbiesOther || "Other") : h).join(", ");
   const audienceSummary = [
@@ -1658,10 +1683,11 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
           </Card>
         )}
 
-        {(t.brandName || t.brandWebsite || problemLabel || audienceSummary || t.insightAnswers?.some(Boolean)) && (
+        {(t.brandName || t.brandWebsite || deliverablesLabel || problemLabel || audienceSummary || t.insightAnswers?.some(Boolean)) && (
           <Card className="p-6 mb-4">
             <SectionLabel>Context</SectionLabel>
             {(t.brandName || t.brandWebsite) && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Brand: </span>{t.brandName || t.brandWebsite}</div>}
+            {deliverablesLabel && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Deliverables: </span>{deliverablesLabel}</div>}
             {problemLabel && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
             {audienceSummary && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
             {(t.insightQuestions || []).map((q, i) => (t.insightAnswers || [])[i] && (
