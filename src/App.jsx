@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, fetchTaskBriefs, syncTaskBriefs, ensureProfile, saveWorkspaceName } from "./db.js";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 
 /* ------------------------------------------------------------------ */
 /* Theme                                                               */
@@ -127,19 +127,6 @@ function parseJSON(text) {
 
 const downloadBrief = () => window.print();
 
-async function generateAvatarImage(prompt) {
-  try {
-    const res = await fetch("/api/generate-avatar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-    const data = await res.json();
-    if (data.skipped || !data.data || !data.data[0]) return null;
-    return data.data[0].url;
-  } catch { return null; }
-}
-
 async function downloadTaskBriefDocx(a, result, typeLabel) {
   const bullets = (items) => (items || []).map(t => new Paragraph({ text: t, bullet: { level: 0 } }));
   const detail = (label, value) => new Paragraph({
@@ -148,22 +135,14 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
   });
 
   const problemLabel = (a.problem || []).map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
+  const formatLabel = (a.format || []).map(f => f === "Other" ? (a.formatOther || "Other") : f).join(", ");
   const locationLabel = (a.audienceLocation || []).map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = (a.audienceHobbies || []).map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
   const audienceSummary = [
-    (a.audienceGender || []).length ? `${a.audienceAge}y ${a.audienceGender.join("/")}` : "",
+    (a.audienceAgeRange || []).join(", "),
+    (a.audienceGender || []).join("/"),
     locationLabel, hobbyLabel,
   ].filter(Boolean).join(" · ");
-
-  const avatarImages = [];
-  for (const av of (a.audienceAvatars || [])) {
-    if (!av.url) continue;
-    try {
-      const imgRes = await fetch(av.url);
-      const buf = await imgRes.arrayBuffer();
-      avatarImages.push(new ImageRun({ data: buf, transformation: { width: 120, height: 120 } }));
-    } catch { /* image URL may have expired — skip rather than fail the whole export */ }
-  }
 
   const insightParagraphs = (a.insightQuestions || [])
     .map((q, i) => ((a.insightAnswers || [])[i] ? detail(q, a.insightAnswers[i]) : null))
@@ -173,7 +152,6 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
     sections: [{
       children: [
         new Paragraph({ text: a.title || "Task brief", heading: HeadingLevel.TITLE }),
-        ...(avatarImages.length ? [new Paragraph({ children: avatarImages, spacing: { after: 100 } })] : []),
         ...(a.audiencePersonaQuestion ? [new Paragraph({ children: [new TextRun({ text: `"${a.audiencePersonaQuestion}"`, italics: true })], spacing: { after: 200 } })] : []),
         new Paragraph({ text: (result && result.creativeBrief) || "", spacing: { after: 200 } }),
         ...(result && result.deliverables && result.deliverables.length ? [
@@ -185,7 +163,10 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
           ...bullets(result.keyRequirements),
         ] : []),
         new Paragraph({ text: "Details", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
+        detail("Brand", a.brandName),
+        detail("Website", a.brandWebsite),
         detail("Type", typeLabel),
+        detail("Format & sizing", formatLabel),
         detail("Deadline", a.deadline),
         detail("Problem", problemLabel),
         detail("Audience", audienceSummary),
@@ -268,17 +249,22 @@ const blankAnswers = {
 };
 
 const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web Dev", "Ads management", "Other"];
+const FORMAT_OPTIONS = ["Square (1:1)", "Portrait / Story (9:16)", "Landscape (16:9)", "A4 / Print", "Multiple sizes", "Not sure yet", "Other"];
 const PROBLEM_OPTIONS = ["Brand awareness", "Sales / conversions", "Product launch", "Customer retention", "Rebrand / repositioning", "Education / explaining the product", "Community engagement", "Other"];
-const LOCATIONS = ["Kuala Lumpur", "Selangor", "Penang", "Johor Bahru", "Sabah", "Sarawak", "Nationwide", "Other"];
+const AGE_BRACKETS = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
+const LOCATIONS = ["Malaysia", "Singapore", "Southeast Asia", "Asia Pacific", "Europe", "North America", "Global / Worldwide", "Other"];
 const GENDERS = ["Male", "Female"];
 const HOBBIES = ["Fitness", "Travel", "Fashion & beauty", "Food & dining", "Technology", "Gaming", "Music", "Reading", "Outdoors", "Wellness", "Other"];
 
 const blankTaskAnswers = {
-  title: "", type: [], typeOther: "", description: "",
+  brandName: "", brandWebsite: "",
+  title: "", type: [], typeOther: "",
+  format: [], formatOther: "",
+  description: "",
   problem: [], problemOther: "",
-  audienceAge: 30, audienceLocation: [], audienceLocationOther: "",
+  audienceAgeRange: [], audienceLocation: [], audienceLocationOther: "",
   audienceGender: [], audienceHobbies: [], audienceHobbiesOther: "",
-  audienceAvatars: [], audiencePersonaQuestion: "",
+  audiencePersonaQuestion: "",
   insightQuestions: [], insightAnswers: [],
   references: "", referencesAvoid: "",
   workingFiles: "", workingDeck: "", extraLinks: "",
@@ -760,7 +746,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const [result, setResult] = useState(null);
   const [link] = useState(() => `prelima.app/t/${Math.random().toString(36).slice(2, 6)}`);
   const [copied, setCopied] = useState(false);
-  const [personaStage, setPersonaStage] = useState(() => (blankTaskAnswers.audienceAvatars.length ? "revealed" : "form"));
+  const [personaStage, setPersonaStage] = useState(() => (blankTaskAnswers.audiencePersonaQuestion ? "revealed" : "form"));
   const [insightsLoading, setInsightsLoading] = useState(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
@@ -768,8 +754,10 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
 
   const steps = useMemo(() => ([
-    { id: "title", label: "What are we briefing" },
+    { id: "brand", label: "Brand or website" },
+    { id: "title", label: "What this is about" },
     { id: "type", label: "Type of work" },
+    { id: "format", label: "Format & sizing" },
     { id: "description", label: "Description" },
     { id: "problem", label: "Problem to solve" },
     { id: "audience", label: "Target audience" },
@@ -784,11 +772,13 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const total = steps.length;
   const pct = step < 0 ? 0 : Math.round((step / total) * 100);
   const typeLabel = a.type.map(t => t === "Other" ? (a.typeOther || "Other") : t).join(", ");
+  const formatLabel = a.format.map(f => f === "Other" ? (a.formatOther || "Other") : f).join(", ");
   const problemLabel = a.problem.map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
   const locationLabel = a.audienceLocation.map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = a.audienceHobbies.map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
+  const ageRangeLabel = a.audienceAgeRange.join(", ");
   const audienceSummary = [
-    a.audienceGender.length ? `${a.audienceAge}y ${a.audienceGender.join("/")}` : "",
+    ageRangeLabel, a.audienceGender.join("/"),
     locationLabel, hobbyLabel,
   ].filter(Boolean).join(" · ");
 
@@ -819,24 +809,19 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     setPersonaStage("generating");
     const genders = a.audienceGender.length ? a.audienceGender : ["person"];
     const hobbies = hobbyLabel || "general interests";
-
-    const avatars = await Promise.all(genders.map(async (gender) => {
-      const prompt = `A cute 3D Pixar-style chibi character illustration of a ${a.audienceAge}-year-old ${gender.toLowerCase()}, big head and small body proportions, big expressive friendly eyes, warm smile, standing pose, holding or wearing something related to an interest in ${hobbies}, plain white background, soft studio lighting, high quality 3D render, no text, no logos, no specific ethnicity or religious symbols`;
-      const url = await generateAvatarImage(prompt);
-      return { gender, url };
-    }));
+    const age = ageRangeLabel || "adult";
 
     let question = "";
     try {
       const text = await callClaude([{
         role: "user",
-        content: `You are roleplaying as a target customer persona for a brand/product based on this creative brief.\n\nBrief title: ${a.title}\nDescription: ${a.description}\nProblem the brief addresses: ${problemLabel || a.description}\n\nPersona: ${a.audienceAge}-year-old, ${genders.join(" and ")}, based in ${locationLabel || "Malaysia"}, interested in ${hobbies}.\n\nWrite ONE short, natural, first-person question this persona would genuinely ask about the product, reflecting their specific problem or curiosity — like a real customer asking a friend. Under 20 words.\n\nRespond ONLY with JSON, no preamble: {"question": "..."}`
+        content: `You are roleplaying as a target customer persona for a brand/product based on this creative brief.\n\nBrief title: ${a.title}\nDescription: ${a.description}\nProblem the brief addresses: ${problemLabel || a.description}\n\nPersona: ${age} years old, ${genders.join(" and ")}, based in ${locationLabel || "Malaysia"}, interested in ${hobbies}.\n\nWrite ONE short, natural, first-person question this persona would genuinely ask about the product, reflecting their specific problem or curiosity — like a real customer asking a friend. Under 20 words.\n\nRespond ONLY with JSON, no preamble: {"question": "..."}`
       }]);
       const j = parseJSON(text);
       if (j && j.question) question = j.question;
     } catch { /* leave blank, non-fatal */ }
 
-    set({ audienceAvatars: avatars, audiencePersonaQuestion: question });
+    set({ audiencePersonaQuestion: question });
     setPersonaStage("revealed");
   }
 
@@ -846,11 +831,13 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     onDone && onDone({
       id: "t" + Date.now(),
       title: a.title || "Untitled brief",
+      brandName: a.brandName, brandWebsite: a.brandWebsite,
       type: a.type, typeOther: a.typeOther, description: a.description,
+      format: a.format, formatOther: a.formatOther,
       problem: a.problem, problemOther: a.problemOther,
-      audienceAge: a.audienceAge, audienceLocation: a.audienceLocation, audienceLocationOther: a.audienceLocationOther,
+      audienceAgeRange: a.audienceAgeRange, audienceLocation: a.audienceLocation, audienceLocationOther: a.audienceLocationOther,
       audienceGender: a.audienceGender, audienceHobbies: a.audienceHobbies, audienceHobbiesOther: a.audienceHobbiesOther,
-      audienceAvatars: a.audienceAvatars, audiencePersonaQuestion: a.audiencePersonaQuestion,
+      audiencePersonaQuestion: a.audiencePersonaQuestion,
       insightQuestions: a.insightQuestions, insightAnswers: a.insightAnswers,
       references: a.references, referencesAvoid: a.referencesAvoid,
       workingFiles: a.workingFiles, workingDeck: a.workingDeck, extraLinks: a.extraLinks,
@@ -881,8 +868,10 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 
   const canNext = () => {
     const s = steps[idx]?.id;
+    if (s === "brand") return a.brandWebsite.trim().length > 0 || a.brandName.trim().length > 0;
     if (s === "title") return a.title.trim().length > 0;
     if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || a.typeOther.trim().length > 0);
+    if (s === "format") return !a.format.includes("Other") || a.formatOther.trim().length > 0;
     if (s === "description") return a.description.trim().length > 0;
     if (s === "problem") return !a.problem.includes("Other") || a.problemOther.trim().length > 0;
     return true;
@@ -903,13 +892,6 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
             <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Brief ready.</h2>
             <p className="mb-8" style={{ color: "var(--muted)" }}>Share the link below with whoever's doing the work, or download a copy.</p>
-            {a.audienceAvatars.length > 0 && (
-              <div className="flex flex-wrap gap-4 mb-6">
-                {a.audienceAvatars.map((av, i) => av.url && (
-                  <img key={i} src={av.url} alt={av.gender} className="rounded-2xl" style={{ width: 140, height: 140, objectFit: "cover", border: "1px solid var(--line)" }} />
-                ))}
-              </div>
-            )}
             <div className="flex flex-wrap items-center gap-3 mb-3">
               <button onClick={() => { navigator.clipboard?.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                 className="flex items-center gap-2 rounded-xl px-4 py-3 mono text-xs"
@@ -925,11 +907,6 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             </div>
             <div className="pr-print-area pr-print-only">
               <h1 className="display text-2xl font-semibold mb-4">{a.title || "Task brief"}</h1>
-              {a.audienceAvatars.length > 0 && (
-                <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-                  {a.audienceAvatars.map((av, i) => av.url && <img key={i} src={av.url} alt={av.gender} style={{ width: 120, height: 120, objectFit: "cover" }} />)}
-                </div>
-              )}
               {a.audiencePersonaQuestion && <p style={{ fontStyle: "italic" }}>“{a.audiencePersonaQuestion}”</p>}
               <p style={{ whiteSpace: "pre-wrap" }}>{result && result.creativeBrief ? result.creativeBrief : ""}</p>
               {result && result.deliverables && result.deliverables.length > 0 && (<>
@@ -941,7 +918,10 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                 <ul>{result.keyRequirements.map((d, i) => <li key={i}>{d}</li>)}</ul>
               </>)}
               <h2 className="display text-lg font-semibold mt-6 mb-2">Details</h2>
+              <p>Brand: {a.brandName || "—"}</p>
+              <p>Website: {a.brandWebsite || "—"}</p>
               <p>Type: {typeLabel || "—"}</p>
+              <p>Format & sizing: {formatLabel || "—"}</p>
               <p>Deadline: {a.deadline || "—"}</p>
               <p>Problem: {problemLabel || "—"}</p>
               <p>Audience: {audienceSummary || "—"}</p>
@@ -978,8 +958,21 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   return (
     <IntakeShell pct={pct} saved={saved} onExit={onExit} freelancer={freelancer}>
       <div className="max-w-2xl w-full">
+        {s === "brand" && (
+          <Q idx={idx} total={total} title="Who's this for?" hint="Your brand or company. If you don't have a website yet, just give us the name.">
+            <SectionLabel>Brand / company name</SectionLabel>
+            <input type="text" value={a.brandName} onChange={e => set({ brandName: e.target.value })}
+              placeholder="e.g. Acme Skincare" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            <div className="mt-4">
+              <SectionLabel>Website</SectionLabel>
+              <input type="url" value={a.brandWebsite} onChange={e => set({ brandWebsite: e.target.value })}
+                placeholder="https://…  (optional if you gave a brand name)" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} />
+            </div>
+          </Q>
+        )}
+
         {s === "title" && (
-          <Q idx={idx} total={total} title="What are we briefing?" hint={'A short name for this task — e.g. "Instagram carousel for product launch."'}>
+          <Q idx={idx} total={total} title="What is this project about?" hint={'A short name for this task — e.g. "Instagram carousel for product launch."'}>
             <input type="text" value={a.title} onChange={e => set({ title: e.target.value })}
               placeholder="Task title" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
           </Q>
@@ -993,6 +986,19 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             {a.type.includes("Other") && (
               <input type="text" value={a.typeOther} onChange={e => set({ typeOther: e.target.value })}
                 placeholder="Tell us what kind of work…"
+                className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            )}
+          </Q>
+        )}
+
+        {s === "format" && (
+          <Q idx={idx} total={total} title="What format or sizing do you need?" hint="Pick everything that applies.">
+            <div className="flex flex-wrap gap-2.5">
+              {FORMAT_OPTIONS.map(f => <Chip key={f} active={a.format.includes(f)} onClick={() => toggle("format", f)}>{f}</Chip>)}
+            </div>
+            {a.format.includes("Other") && (
+              <input type="text" value={a.formatOther} onChange={e => set({ formatOther: e.target.value })}
+                placeholder="Tell us the format or sizing…"
                 className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
             )}
           </Q>
@@ -1017,12 +1023,14 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "audience" && (
-          <Q idx={idx} total={total} title="Who's the target audience?" hint="Optional — build a quick persona and we'll generate an avatar of them.">
+          <Q idx={idx} total={total} title="Who's the target audience?" hint="Optional — build a quick persona and we'll suggest a question they might ask.">
             {personaStage !== "revealed" ? (
               <div className="space-y-6">
                 <div>
-                  <SectionLabel>Age</SectionLabel>
-                  <Slider value={a.audienceAge} min={13} max={70} onChange={v => set({ audienceAge: v })} format={v => `${v} years old`} />
+                  <SectionLabel>Age range</SectionLabel>
+                  <div className="flex flex-wrap gap-2.5">
+                    {AGE_BRACKETS.map(r => <Chip key={r} active={a.audienceAgeRange.includes(r)} onClick={() => toggle("audienceAgeRange", r)}>{r}</Chip>)}
+                  </div>
                 </div>
                 <div>
                   <SectionLabel>Location</SectionLabel>
@@ -1052,25 +1060,11 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                 </div>
                 <Btn onClick={generatePersona} disabled={a.audienceGender.length === 0 || personaStage === "generating"}>
                   {personaStage === "generating" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  {personaStage === "generating" ? "Bringing them to life…" : "Generate persona"}
+                  {personaStage === "generating" ? "Thinking…" : "Generate persona"}
                 </Btn>
               </div>
             ) : (
               <div>
-                <div className="flex flex-wrap gap-4 mb-5">
-                  {a.audienceAvatars.map((av, i) => (
-                    <div key={i} className="rounded-2xl overflow-hidden fade" style={{ width: 160, height: 160, border: "1px solid var(--line)" }}>
-                      {av.url ? (
-                        <img src={av.url} alt={av.gender} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center gap-1" style={{ background: "var(--surface-2)" }}>
-                          <Users className="w-6 h-6" style={{ color: "var(--muted)" }} />
-                          <span className="mono text-[10px]" style={{ color: "var(--muted)" }}>{av.gender}</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
                 {a.audiencePersonaQuestion && (
                   <div className="rounded-2xl p-5 mb-4" style={{ background: "var(--accent-soft)" }}>
                     <p className="text-base italic" style={{ color: "var(--accent)" }}>&ldquo;{a.audiencePersonaQuestion}&rdquo;</p>
@@ -1147,13 +1141,15 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
           <Q idx={idx} total={total} title="Quick check before we generate it." hint="Tap any answer to change it.">
             <div className="space-y-2">
               {[
-                ["Title", a.title, 0],
-                ["Type", typeLabel || "—", 1],
-                ["Description", a.description, 2],
-                ["Problem", problemLabel || "—", 3],
-                ["Audience", audienceSummary || "—", 4],
-                ["Insights", a.insightAnswers.filter(Boolean).length > 0 ? `${a.insightAnswers.filter(Boolean).length} answered` : "—", 5],
-                ["Deadline", a.deadline || "—", 8],
+                ["Brand", a.brandName || a.brandWebsite || "—", 0],
+                ["Title", a.title, 1],
+                ["Type", typeLabel || "—", 2],
+                ["Format", formatLabel || "—", 3],
+                ["Description", a.description, 4],
+                ["Problem", problemLabel || "—", 5],
+                ["Audience", audienceSummary || "—", 6],
+                ["Insights", a.insightAnswers.filter(Boolean).length > 0 ? `${a.insightAnswers.filter(Boolean).length} answered` : "—", 7],
+                ["Deadline", a.deadline || "—", 10],
               ].map(([k, v, go]) => (
                 <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
                   style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
@@ -1184,7 +1180,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 /* Landing page                                                        */
 /* ------------------------------------------------------------------ */
 
-function Landing({ onStart, onStartTaskBrief, onSignIn, dark, setDark }) {
+function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <header className="flex items-center justify-between px-5 md:px-12 py-5 max-w-5xl mx-auto w-full">
@@ -1193,7 +1189,6 @@ function Landing({ onStart, onStartTaskBrief, onSignIn, dark, setDark }) {
           <button onClick={() => setDark(!dark)} aria-label="Toggle dark mode" className="p-2 rounded-lg" style={{ color: "var(--muted)" }}>
             {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
-          <Btn variant="secondary" onClick={onSignIn} className="px-4 py-2">Sign in</Btn>
         </div>
       </header>
 
@@ -1221,13 +1216,16 @@ function Landing({ onStart, onStartTaskBrief, onSignIn, dark, setDark }) {
             <Sparkles className="w-6 h-6 mb-4" style={{ color: "var(--accent)" }} />
             <div className="display text-xl font-semibold mb-1.5">Write a creative brief</div>
             <div className="text-sm leading-relaxed mb-4" style={{ color: "var(--muted)" }}>
-              For briefing a designer, writer or freelancer on your own team. Sign in to save it.
+              For briefing a designer, writer or freelancer on your own team. No login required.
             </div>
             <div className="inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
               Start <ArrowRight className="w-3.5 h-3.5" />
             </div>
           </button>
         </div>
+        <p className="rise mt-8 text-xs flex items-center gap-1.5" style={{ color: "var(--muted)", animationDelay: ".15s" }}>
+          <Lock className="w-3 h-3" /> No account needed — nothing is stored on our end. You download your brief, we don't keep a copy.
+        </p>
       </main>
 
       <footer className="border-t px-5 md:px-12 py-8" style={{ borderColor: "var(--line)" }}>
@@ -1654,7 +1652,7 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
   const locationLabel = (t.audienceLocation || []).map(l => l === "Other" ? (t.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = (t.audienceHobbies || []).map(h => h === "Other" ? (t.audienceHobbiesOther || "Other") : h).join(", ");
   const audienceSummary = [
-    (t.audienceGender || []).length ? `${t.audienceAge}y ${t.audienceGender.join("/")}` : "",
+    (t.audienceAgeRange || []).join(", "), (t.audienceGender || []).join("/"),
     locationLabel, hobbyLabel,
   ].filter(Boolean).join(" · ");
   return (
@@ -1700,21 +1698,17 @@ function CreativeBriefViewer({ brief: t, onBack, remove }) {
           </Card>
         )}
 
-        {t.audienceAvatars?.length > 0 && (
+        {t.audiencePersonaQuestion && (
           <Card className="p-6 mb-4">
             <SectionLabel>Persona</SectionLabel>
-            <div className="flex flex-wrap gap-4 mt-3 mb-3">
-              {t.audienceAvatars.map((av, i) => av.url && (
-                <img key={i} src={av.url} alt={av.gender} className="rounded-2xl" style={{ width: 120, height: 120, objectFit: "cover", border: "1px solid var(--line)" }} />
-              ))}
-            </div>
-            {t.audiencePersonaQuestion && <p className="text-sm italic" style={{ color: "var(--accent)" }}>&ldquo;{t.audiencePersonaQuestion}&rdquo;</p>}
+            <p className="text-sm italic mt-2" style={{ color: "var(--accent)" }}>&ldquo;{t.audiencePersonaQuestion}&rdquo;</p>
           </Card>
         )}
 
-        {(problemLabel || audienceSummary || t.insightAnswers?.some(Boolean)) && (
+        {(t.brandName || t.brandWebsite || problemLabel || audienceSummary || t.insightAnswers?.some(Boolean)) && (
           <Card className="p-6 mb-4">
             <SectionLabel>Context</SectionLabel>
+            {(t.brandName || t.brandWebsite) && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Brand: </span>{t.brandName || t.brandWebsite}</div>}
             {problemLabel && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
             {audienceSummary && <div className="text-sm mt-2"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
             {(t.insightQuestions || []).map((q, i) => (t.insightAnswers || [])[i] && (
@@ -2380,7 +2374,6 @@ export default function App() {
       {view === "landing" && <Landing
         onStart={() => startIntake("landing")}
         onStartTaskBrief={() => setView("taskBrief")}
-        onSignIn={() => setView(session ? "app" : "auth")}
         dark={dark} setDark={setDark} />}
       {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
       {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} taskBriefs={taskBriefs} setTaskBriefs={setTaskBriefs} onNewTaskBrief={() => setView("taskBrief")} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
