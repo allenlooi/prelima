@@ -242,6 +242,16 @@ const SectionLabel = ({ children }) => (
   <div className="mono text-[11px] font-medium uppercase tracking-[0.14em] mb-2" style={{ color: "var(--muted)" }}>{children}</div>
 );
 
+/* Light/dark toggle with a hover tooltip explaining what it does. */
+const ThemeToggle = ({ dark, setDark }) => (
+  <button onClick={() => setDark(!dark)}
+    aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+    title={dark ? "Switch to light mode" : "Switch to dark mode"}
+    className="p-2 rounded-lg" style={{ color: "var(--muted)" }}>
+    {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+  </button>
+);
+
 /* Muted helper shown under any chip group that has an "Other"/"Others" option,
    so people know exactly what to do when their choice isn't listed. */
 const OtherHint = () => (
@@ -435,7 +445,7 @@ const VoiceTA = ({ value, onChange, placeholder, rows = 5, cleanHint }) => {
   );
 };
 
-function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onDone, onExit }) {
+function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onDone, onExit, dark, setDark }) {
   const [step, setStep] = useState(-1);
   const [a, setA] = useState(blankAnswers);
   const [saved, setSaved] = useState(true);
@@ -654,7 +664,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   if (submitState === "working" || submitState === "done") {
     return (
-      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
+      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-2xl">
           {submitState === "working" ? (<>
             <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
@@ -684,7 +694,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   if (preview) {
     const previewRes = { professionalBrief: [a.overview, a.background, a.products ? `Products / services:\n${a.products}` : ""].filter(Boolean).join("\n\n") };
     return (
-      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
+      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-2xl">
           <div className="mb-5">
             <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Preview</div>
@@ -703,7 +713,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   if (step === -1) {
     return (
-      <IntakeShell pct={0} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
+      <IntakeShell pct={0} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-xl">
           <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>NEW PROJECT BRIEF</div>
           <h1 className="display text-3xl md:text-5xl font-semibold leading-tight mb-4">Let's shape this project properly.</h1>
@@ -763,7 +773,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const s = steps[idx].id;
 
   return (
-    <IntakeShell pct={pct} saved={saved} onExit={onExit} projectName={projectName} freelancer={freelancer}>
+    <IntakeShell pct={pct} saved={saved} onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
       <div className="max-w-2xl w-full">
         {s === "website" && (
           <Q idx={idx} total={total} title="Let's start with your business." hint="Paste your website and AI writes your business background for you. No website? You can type it instead.">
@@ -1040,7 +1050,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   );
 }
 
-function IntakeShell({ children, pct, saved, onExit, projectName, freelancer }) {
+function IntakeShell({ children, pct, saved, onExit, projectName, freelancer, dark, setDark }) {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <div className="h-1 w-full" style={{ background: "var(--line)" }}>
@@ -1055,6 +1065,7 @@ function IntakeShell({ children, pct, saved, onExit, projectName, freelancer }) 
             {saved ? <Check className="w-3 h-3" /> : <Loader2 className="w-3 h-3 animate-spin" />}
             {saved ? "Saved" : "Saving"}
           </span>
+          {setDark && <ThemeToggle dark={dark} setDark={setDark} />}
           {onExit && <button onClick={onExit} aria-label="Exit intake"><X className="w-4 h-4" style={{ color: "var(--muted)" }} /></button>}
         </div>
       </header>
@@ -1075,7 +1086,7 @@ const Wordmark = ({ small }) => (
 /* Creative / task brief — freelancer briefing their own team          */
 /* ------------------------------------------------------------------ */
 
-function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
+function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark }) {
   const [step, setStep] = useState(-1);
   const [a, setA] = useState(blankTaskAnswers);
   const [saved, setSaved] = useState(true);
@@ -1299,7 +1310,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 
   if (submitState === "working" || submitState === "done") {
     return (
-      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer}>
+      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-2xl">
           {submitState === "working" ? (<>
             <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
@@ -1337,7 +1348,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   if (preview) {
     const previewRes = { creativeBrief: a.description || "", deliverables: [], keyRequirements: [] };
     return (
-      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer}>
+      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-2xl">
           <div className="mb-5">
             <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Preview</div>
@@ -1356,7 +1367,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 
   if (step === -1) {
     return (
-      <IntakeShell pct={0} saved onExit={onExit} freelancer={freelancer}>
+      <IntakeShell pct={0} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-xl">
           <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>NEW CREATIVE BRIEF</div>
           <h1 className="display text-3xl md:text-5xl font-semibold leading-tight mb-4">Brief someone on a piece of work.</h1>
@@ -1430,7 +1441,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const s = steps[idx].id;
 
   return (
-    <IntakeShell pct={pct} saved={saved} onExit={onExit} freelancer={freelancer}>
+    <IntakeShell pct={pct} saved={saved} onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
       <div className="max-w-2xl w-full">
         {s === "brand" && (
           <Q idx={idx} total={total} title="Who's this for?" hint="Your brand or company. If you don't have a website yet, just give us the name.">
@@ -1680,9 +1691,7 @@ function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
       <header className="flex items-center justify-between px-5 md:px-12 py-5 max-w-5xl mx-auto w-full">
         <Wordmark />
         <div className="flex items-center gap-2">
-          <button onClick={() => setDark(!dark)} aria-label="Toggle dark mode" className="p-2 rounded-lg" style={{ color: "var(--muted)" }}>
-            {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </button>
+          <ThemeToggle dark={dark} setDark={setDark} />
         </div>
       </header>
 
@@ -1697,9 +1706,9 @@ function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
           <button onClick={onStart} className="group text-left rounded-2xl p-6 md:p-8 transition-transform duration-150 hover:scale-[1.01] active:scale-[.99]"
             style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
             <Users className="w-6 h-6 mb-4" style={{ color: "var(--accent)" }} />
-            <div className="display text-xl font-semibold mb-1.5">Write a brief</div>
+            <div className="display text-xl font-semibold mb-1.5">Write a project brief</div>
             <div className="text-sm leading-relaxed mb-4" style={{ color: "var(--muted)" }}>
-              For a client to tell a freelancer or agency what they need. One link, no login required.
+              For a client to tell a freelancer or agency what they need.
             </div>
             <div className="inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
               Start <ArrowRight className="w-3.5 h-3.5" />
@@ -1710,7 +1719,7 @@ function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
             <Sparkles className="w-6 h-6 mb-4" style={{ color: "var(--accent)" }} />
             <div className="display text-xl font-semibold mb-1.5">Write a creative brief</div>
             <div className="text-sm leading-relaxed mb-4" style={{ color: "var(--muted)" }}>
-              For briefing a designer, writer or freelancer on your own team. No login required.
+              For briefing a designer, writer or freelancer on your own team.
             </div>
             <div className="inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
               Start <ArrowRight className="w-3.5 h-3.5" />
@@ -1718,7 +1727,7 @@ function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
           </button>
         </div>
         <p className="rise mt-8 text-xs flex items-center gap-1.5" style={{ color: "var(--muted)", animationDelay: ".15s" }}>
-          <Lock className="w-3 h-3" /> No account needed — nothing is stored on our end. You download your brief, we don't keep a copy.
+          <Lock className="w-3 h-3" /> No login required — nothing is stored on our end. You download your brief, we don't keep a copy.
         </p>
       </main>
 
@@ -2866,8 +2875,8 @@ export default function App() {
         dark={dark} setDark={setDark} />}
       {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
       {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} taskBriefs={taskBriefs} setTaskBriefs={setTaskBriefs} onNewTaskBrief={() => setView("taskBrief")} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
-      {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} />}
-      {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} onDone={handleTaskBriefDone} onExit={() => setView("app")} />}
+      {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} dark={dark} setDark={setDark} />}
+      {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} onDone={handleTaskBriefDone} onExit={() => setView("app")} dark={dark} setDark={setDark} />}
     </div>
   );
 }
