@@ -84,10 +84,23 @@ const ThemeStyles = () => (
     [data-app="prelima"][data-theme="dark"] { color-scheme: dark; }
     [data-app="prelima"] ::placeholder { color: var(--muted); opacity: .7; }
     .pr-print-only { display: none; }
+    @page { size: A4; margin: 14mm; }
     @media print {
+      /* Always export in light mode, even when the app is in dark mode. */
+      [data-app="prelima"], [data-app="prelima"][data-theme="dark"] {
+        --bg: #FFFFFF; --surface: #FFFFFF; --surface-2: #FBFBF9; --ink: #17171C;
+        --muted: #5A5A64; --line: #E2E2DC; --accent: #4353FF; --accent-ink: #FFFFFF;
+        --accent-soft: #EEF0FF; --good: #0E9F6E; --warn: #C27803; color-scheme: light;
+      }
+      html, body { background: #FFFFFF !important; }
       body * { visibility: hidden !important; }
       .pr-print-area, .pr-print-area * { visibility: visible !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      .pr-print-area { position: absolute !important; left: 0; top: 0; width: 100%; margin: 0; box-shadow: none !important; }
+      /* Fill the printable page rather than a random centred size. */
+      .pr-print-area {
+        position: absolute !important; left: 0 !important; top: 0 !important; right: 0 !important;
+        width: 100% !important; max-width: none !important; margin: 0 !important;
+        border: none !important; border-radius: 0 !important; box-shadow: none !important;
+      }
       .pr-print-only { display: block !important; }
     }
   `}</style>
@@ -452,13 +465,15 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const [aiBusy, setAiBusy] = useState(false);
   const [aiNote, setAiNote] = useState("");
   const [showBg, setShowBg] = useState(false);
-  const [submitState, setSubmitState] = useState(null); // null | 'working' | 'done' | 'error'
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(null); // null until the user opts into AI polish
+  const [polishing, setPolishing] = useState(false);
+  const [polishNote, setPolishNote] = useState("");
   const [timelineWarning, setTimelineWarning] = useState("");
   const [timelineChecking, setTimelineChecking] = useState(false);
   const [editing, setEditing] = useState(false);
   const [preview, setPreview] = useState(false);
   const [openRow, setOpenRow] = useState(null);
+  const doneRef = useRef(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   const setResultField = (patch) => setResult(r => ({ ...(r || {}), ...patch }));
@@ -540,25 +555,33 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     setAiBusy(false);
   }
 
-  async function submit() {
-    setSubmitState("working");
+  // The brief exists as-is from the client's own words. AI is opt-in on the preview page.
+  const rawResult = { professionalBrief: a.overview || "", missingInfo: [], followUpQuestions: [], unclearRequirements: [], scopeGaps: [] };
+  const displayRes = result || rawResult;
+
+  function goToPreview() {
+    if (!doneRef.current) {
+      doneRef.current = true;
+      onDone && onDone(displayRes, { ...a, projectName });
+    }
+    setPreview(true);
+  }
+
+  async function polishWithAI() {
+    setPolishing(true); setPolishNote("");
     const payload = { ...a, projectName };
     try {
       const text = await callClaude([{
         role: "user",
-        content: `You are structuring a client intake into a professional creative brief for a freelancer.\n\nClient answers (JSON):\n${JSON.stringify(payload, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"professionalBrief": "a well-written multi-paragraph creative brief in professional plain English",\n"missingInfo": ["specific information the client did not provide"],\n"followUpQuestions": ["sharp questions the freelancer should ask before quoting"],\n"unclearRequirements": ["requirements that are ambiguous, quoting the vague phrase"],\n"scopeGaps": ["work implied by the answers but not explicitly scoped"]}`
+        content: `You are polishing a client intake into a professional creative brief for a freelancer. Rewrite their answers into clear, professional plain English — keep every detail and their intent, don't invent scope.\n\nClient answers (JSON):\n${JSON.stringify(payload, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"professionalBrief": "a well-written multi-paragraph creative brief",\n"missingInfo": ["specific information the client did not provide"],\n"followUpQuestions": ["sharp questions the freelancer should ask before quoting"],\n"unclearRequirements": ["requirements that are ambiguous, quoting the vague phrase"],\n"scopeGaps": ["work implied by the answers but not explicitly scoped"]}`
       }]);
       const j = parseJSON(text);
-      if (j && j.professionalBrief) { setResult(j); setSubmitState("done"); onDone && onDone(j, payload); return; }
-      throw new Error("bad json");
+      if (j && j.professionalBrief) { setResult(j); setEditing(false); }
+      else throw new Error("bad json");
     } catch {
-      const fallback = {
-        professionalBrief: `${payload.overview}\n\n${payload.background}${payload.products ? `\n\nProducts / services:\n${payload.products}` : ""}\n\nObjectives: ${payload.objectives.join(", ") || "—"}. Audience: ${audienceSummary || "—"}.\nDeliverables: ${deliverablesLabel || "—"} across ${payload.platforms.join(", ") || "—"}.\nTimeline: ${payload.timelineMode === "date" ? (payload.timelineDate || "—") : `${payload.timelineWeeks} weeks`}. Budget: ${fmtBudget(payload.budget)}${payload.budgetFlexible ? " (flexible)" : " (fixed)"} with ${payload.revisions} revision rounds.`,
-        missingInfo: [], followUpQuestions: [], unclearRequirements: [], scopeGaps: [],
-        _fallback: true,
-      };
-      setResult(fallback); setSubmitState("done"); onDone && onDone(fallback, payload);
+      setPolishNote("AI polish is unavailable right now — your brief is unchanged.");
     }
+    setPolishing(false);
   }
 
   const canNext = () => {
@@ -662,50 +685,30 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     );
   };
 
-  if (submitState === "working" || submitState === "done") {
-    return (
-      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
-        <div className="rise max-w-2xl">
-          {submitState === "working" ? (<>
-            <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
-            <h2 className="display text-3xl font-semibold mb-3">Turning your answers into a brief…</h2>
-            <p style={{ color: "var(--muted)" }}>AI is rewriting your responses into a professional creative brief and checking for anything missing. This takes a few seconds.</p>
-          </>) : (<>
-            <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
-            <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Your brief is ready.</h2>
-            <p className="mb-8" style={{ color: "var(--muted)" }}>{editing ? "Edit the AI-written parts below, then save." : "Download a copy to share with whoever you're briefing."}</p>
-            <div className="flex flex-wrap items-center gap-3">
-              {editing ? (
-                <Btn onClick={() => setEditing(false)}><Check className="w-4 h-4" /> Save changes</Btn>
-              ) : (
-                <Btn variant="secondary" onClick={() => setEditing(true)}><PenLine className="w-4 h-4" /> Edit brief</Btn>
-              )}
-              <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download my brief</Btn>
-              {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
-            </div>
-            <p className="mono text-[11px] mt-5 mb-1" style={{ color: "var(--muted)" }}>Keep a copy — handy if you're briefing other vendors too.</p>
-            {briefDoc(result, editing)}
-          </>)}
-        </div>
-      </IntakeShell>
-    );
-  }
-
   if (preview) {
-    const previewRes = { professionalBrief: [a.overview, a.background, a.products ? `Products / services:\n${a.products}` : ""].filter(Boolean).join("\n\n") };
     return (
       <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-2xl">
           <div className="mb-5">
-            <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Preview</div>
-            <h2 className="display text-2xl font-semibold">How your brief will look</h2>
-            <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>This uses your own words. Send to have AI polish the writing and flag anything missing.</p>
+            <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Your brief</div>
+            <h2 className="display text-2xl md:text-3xl font-semibold">Here's your brief.</h2>
+            <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
+              {result ? "AI-polished — edit anything, or download it." : "It's ready as-is, in your own words. Want tighter writing and a check for gaps? Polish it with AI — or download it as is."}
+            </p>
           </div>
-          {briefDoc(previewRes, false)}
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Btn variant="secondary" onClick={() => setPreview(false)}><ArrowLeft className="w-4 h-4" /> Back to edit</Btn>
-            <Btn onClick={() => { setPreview(false); submit(); }}><Sparkles className="w-4 h-4" /> Send my brief</Btn>
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <Btn onClick={polishWithAI} disabled={polishing}>
+              {polishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {polishing ? "Polishing…" : (result ? "Polish again" : "Polish my brief with AI")}
+            </Btn>
+            {editing
+              ? <Btn variant="secondary" onClick={() => setEditing(false)}><Check className="w-4 h-4" /> Save changes</Btn>
+              : <Btn variant="secondary" onClick={() => setEditing(true)}><PenLine className="w-4 h-4" /> Edit</Btn>}
+            <Btn variant="secondary" onClick={downloadBrief}><Download className="w-4 h-4" /> Download my brief</Btn>
+            <Btn variant="ghost" onClick={() => { setEditing(false); setPreview(false); }}><ArrowLeft className="w-4 h-4" /> Back to edit</Btn>
           </div>
+          {polishNote && <p className="text-sm mb-3" style={{ color: "var(--warn)" }}>{polishNote}</p>}
+          {briefDoc(displayRes, editing)}
         </div>
       </IntakeShell>
     );
@@ -1027,14 +1030,9 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
               </button>
             </div>
 
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Btn variant="secondary" onClick={() => setPreview(true)} className="text-base px-6 py-4">
-                <Eye className="w-4 h-4" /> Preview
-              </Btn>
-              <Btn onClick={submit} className="text-base px-7 py-4">
-                <Sparkles className="w-4 h-4" /> Send my brief
-              </Btn>
-            </div>
+            <Btn onClick={goToPreview} className="mt-6 text-base px-7 py-4">
+              <Eye className="w-4 h-4" /> See my brief
+            </Btn>
           </Q>
         )}
 
@@ -1090,14 +1088,14 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
   const [step, setStep] = useState(-1);
   const [a, setA] = useState(blankTaskAnswers);
   const [saved, setSaved] = useState(true);
-  const [submitState, setSubmitState] = useState(null); // null | 'working' | 'done'
-  const [result, setResult] = useState(null);
-  const [link] = useState(() => `prelima.app/t/${Math.random().toString(36).slice(2, 6)}`);
-  const [copied, setCopied] = useState(false);
+  const [result, setResult] = useState(null); // null until the user opts into AI polish
+  const [polishing, setPolishing] = useState(false);
+  const [polishNote, setPolishNote] = useState("");
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [preview, setPreview] = useState(false);
   const [openRow, setOpenRow] = useState(null);
+  const doneRef = useRef(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   const setResultField = (patch) => setResult(r => ({ ...(r || {}), ...patch }));
@@ -1163,44 +1161,47 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
     })();
   }, [idx]);
 
-  function finish(brief) {
-    setResult(brief);
-    setSubmitState("done");
-    onDone && onDone({
-      id: "t" + Date.now(),
-      title: a.title || "Untitled brief",
-      brandName: a.brandName, brandWebsite: a.brandWebsite,
-      type: a.type, typeOther: a.typeOther, description: a.description,
-      deliverables: a.deliverables,
-      problem: a.problem, problemOther: a.problemOther,
-      audienceAgeRange: a.audienceAgeRange, audienceLocation: a.audienceLocation, audienceLocationOther: a.audienceLocationOther,
-      audienceGender: a.audienceGender, audienceHobbies: a.audienceHobbies, audienceHobbiesOther: a.audienceHobbiesOther,
-      insightQuestions: a.insightQuestions, insightAnswers: a.insightAnswers,
-      references: a.references, referencesAvoid: a.referencesAvoid,
-      workingFiles: a.workingFiles, workingDeck: a.workingDeck, extraLinks: a.extraLinks,
-      deadline: a.deadline, briefer: a.briefer,
-      status: "Ready", created: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
-      link, brief,
-    });
+  // The brief exists as-is from the user's own words. AI is opt-in on the preview page.
+  const rawResult = { creativeBrief: a.description || "", deliverables: [], keyRequirements: [] };
+  const displayRes = result || rawResult;
+
+  function goToPreview() {
+    if (!doneRef.current) {
+      doneRef.current = true;
+      onDone && onDone({
+        id: "t" + Date.now(),
+        title: a.title || "Untitled brief",
+        brandName: a.brandName, brandWebsite: a.brandWebsite,
+        type: a.type, typeOther: a.typeOther, description: a.description,
+        deliverables: a.deliverables,
+        problem: a.problem, problemOther: a.problemOther,
+        audienceAgeRange: a.audienceAgeRange, audienceLocation: a.audienceLocation, audienceLocationOther: a.audienceLocationOther,
+        audienceGender: a.audienceGender, audienceHobbies: a.audienceHobbies, audienceHobbiesOther: a.audienceHobbiesOther,
+        insightQuestions: a.insightQuestions, insightAnswers: a.insightAnswers,
+        references: a.references, referencesAvoid: a.referencesAvoid,
+        workingFiles: a.workingFiles, workingDeck: a.workingDeck, extraLinks: a.extraLinks,
+        deadline: a.deadline, briefer: a.briefer,
+        status: "Ready", created: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+        brief: displayRes,
+      });
+    }
+    setPreview(true);
   }
 
-  async function submit() {
-    setSubmitState("working");
+  async function polishWithAI() {
+    setPolishing(true); setPolishNote("");
     try {
       const text = await callClaude([{
         role: "user",
-        content: `You are structuring a task brief a freelancer/agency is handing off to a designer or creative freelancer on their team.\n\nTask answers (JSON):\n${JSON.stringify(a, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"creativeBrief": "a well-written, clear creative brief in professional plain English that weaves in the problem, target audience and any insights provided", "keyRequirements": ["specific must-follow requirements"], "deliverables": ["concrete expected outputs"]}`
+        content: `You are polishing a creative brief a freelancer/agency is handing off to a designer or creative. Rewrite their notes into clear, professional plain English — keep every detail and their intent, don't invent scope.\n\nTask answers (JSON):\n${JSON.stringify(a, null, 2)}\n\nRespond ONLY with JSON, no preamble, no markdown fences:\n{"creativeBrief": "a well-written, clear creative brief that weaves in the problem, target audience and any insights provided", "keyRequirements": ["specific must-follow requirements"], "deliverables": ["concrete expected outputs"]}`
       }]);
       const j = parseJSON(text);
-      if (j && j.creativeBrief) { finish(j); return; }
-      throw new Error("bad json");
+      if (j && j.creativeBrief) { setResult(j); setEditing(false); }
+      else throw new Error("bad json");
     } catch {
-      finish({
-        creativeBrief: `${a.description}${problemLabel ? `\n\nProblem: ${problemLabel}` : ""}${audienceSummary ? `\n\nAudience: ${audienceSummary}` : ""}\n\nType: ${typeLabel || "—"}. Deadline: ${a.deadline || "—"}.`,
-        keyRequirements: [], deliverables: [],
-        _fallback: true,
-      });
+      setPolishNote("AI polish is unavailable right now — your brief is unchanged.");
     }
+    setPolishing(false);
   }
 
   const canNext = () => {
@@ -1308,58 +1309,31 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
     </div>
   );
 
-  if (submitState === "working" || submitState === "done") {
-    return (
-      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
-        <div className="rise max-w-2xl">
-          {submitState === "working" ? (<>
-            <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
-            <h2 className="display text-3xl font-semibold mb-3">Structuring your brief…</h2>
-            <p style={{ color: "var(--muted)" }}>AI is turning your notes into a clear creative brief. This takes a few seconds.</p>
-          </>) : (<>
-            <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
-            <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Brief ready.</h2>
-            <p className="mb-8" style={{ color: "var(--muted)" }}>{editing ? "Edit the AI-written parts below, then save." : "Share the link below with whoever's doing the work, or download a copy."}</p>
-            <div className="flex flex-wrap items-center gap-3 mb-3">
-              <button onClick={() => { navigator.clipboard?.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-                className="flex items-center gap-2 rounded-xl px-4 py-3 mono text-xs"
-                style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
-                {copied ? <Check className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
-                {copied ? "Link copied" : link}
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              {editing ? (
-                <Btn onClick={() => setEditing(false)}><Check className="w-4 h-4" /> Save changes</Btn>
-              ) : (
-                <Btn variant="secondary" onClick={() => setEditing(true)}><PenLine className="w-4 h-4" /> Edit brief</Btn>
-              )}
-              <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download PDF</Btn>
-              <Btn variant="secondary" onClick={() => downloadTaskBriefDocx(a, result, typeLabel)}><FileText className="w-4 h-4" /> Download Word doc</Btn>
-              {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
-            </div>
-            {briefDoc(result, editing)}
-          </>)}
-        </div>
-      </IntakeShell>
-    );
-  }
-
   if (preview) {
-    const previewRes = { creativeBrief: a.description || "", deliverables: [], keyRequirements: [] };
     return (
       <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
         <div className="rise max-w-2xl">
           <div className="mb-5">
-            <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Preview</div>
-            <h2 className="display text-2xl font-semibold">How your brief will look</h2>
-            <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>This uses your own words. Generate to have AI polish the writing and add expected outputs.</p>
+            <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Your brief</div>
+            <h2 className="display text-2xl md:text-3xl font-semibold">Here's your brief.</h2>
+            <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
+              {result ? "AI-polished — edit anything, or download it." : "It's ready as-is, in your own words. Want tighter writing? Polish it with AI — or download it as is."}
+            </p>
           </div>
-          {briefDoc(previewRes, false)}
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Btn variant="secondary" onClick={() => setPreview(false)}><ArrowLeft className="w-4 h-4" /> Back to edit</Btn>
-            <Btn onClick={() => { setPreview(false); submit(); }}><Sparkles className="w-4 h-4" /> Generate brief</Btn>
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <Btn onClick={polishWithAI} disabled={polishing}>
+              {polishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {polishing ? "Polishing…" : (result ? "Polish again" : "Polish my brief with AI")}
+            </Btn>
+            {editing
+              ? <Btn variant="secondary" onClick={() => setEditing(false)}><Check className="w-4 h-4" /> Save changes</Btn>
+              : <Btn variant="secondary" onClick={() => setEditing(true)}><PenLine className="w-4 h-4" /> Edit</Btn>}
+            <Btn variant="secondary" onClick={downloadBrief}><Download className="w-4 h-4" /> Download PDF</Btn>
+            <Btn variant="secondary" onClick={() => downloadTaskBriefDocx(a, displayRes, typeLabel)}><FileText className="w-4 h-4" /> Word doc</Btn>
+            <Btn variant="ghost" onClick={() => { setEditing(false); setPreview(false); }}><ArrowLeft className="w-4 h-4" /> Back to edit</Btn>
           </div>
+          {polishNote && <p className="text-sm mb-3" style={{ color: "var(--warn)" }}>{polishNote}</p>}
+          {briefDoc(displayRes, editing)}
         </div>
       </IntakeShell>
     );
@@ -1635,7 +1609,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
         )}
 
         {s === "review" && (
-          <Q idx={idx} total={total} title="Quick check before we generate it." hint="Tap any answer to edit it right here.">
+          <Q idx={idx} total={total} title="Quick check before you preview." hint="Tap any answer to edit it right here.">
             <div className="space-y-2">
               {[
                 ["Brand", "brand", a.brandName || a.brandWebsite || "—"],
@@ -1659,14 +1633,9 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
                 </div>
               ))}
             </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Btn variant="secondary" onClick={() => setPreview(true)} className="text-base px-6 py-4">
-                <Eye className="w-4 h-4" /> Preview
-              </Btn>
-              <Btn onClick={submit} className="text-base px-7 py-4">
-                <Sparkles className="w-4 h-4" /> Generate brief
-              </Btn>
-            </div>
+            <Btn onClick={goToPreview} className="mt-6 text-base px-7 py-4">
+              <Eye className="w-4 h-4" /> See my brief
+            </Btn>
           </Q>
         )}
 
