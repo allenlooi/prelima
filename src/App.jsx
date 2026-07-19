@@ -446,8 +446,12 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const [result, setResult] = useState(null);
   const [timelineWarning, setTimelineWarning] = useState("");
   const [timelineChecking, setTimelineChecking] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [preview, setPreview] = useState(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
+  const setResultField = (patch) => setResult(r => ({ ...(r || {}), ...patch }));
+  const linesToArr = (str) => str.split("\n").map(x => x.replace(/^[-•]\s*/, "").trim()).filter(Boolean);
   useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
 
   const steps = useMemo(() => ([
@@ -566,6 +570,79 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   /* ---- screens ---- */
 
+  const briefDoc = (res, canEdit) => {
+    const clarify = res ? [...(res.missingInfo || []), ...(res.unclearRequirements || []), ...(res.scopeGaps || [])] : [];
+    return (
+    <div className="pr-print-area rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+      <div style={{ background: "var(--accent-soft)", padding: "28px 32px", borderBottom: "3px solid var(--accent)" }}>
+        <div className="mono text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--accent)" }}>Project Brief</div>
+        <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{projectName}</h1>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {a.objectives.length > 0 && <Tag tone="accent">{a.objectives[0]}{a.objectives.length > 1 ? ` +${a.objectives.length - 1}` : ""}</Tag>}
+          {a.budgetRange && <Tag>{fmtBudget(a.budget)}</Tag>}
+          <Tag>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</Tag>
+        </div>
+      </div>
+
+      <div style={{ padding: "28px 32px" }}>
+        <BriefSection title="The brief">
+          {canEdit
+            ? <textarea value={(res && res.professionalBrief) || ""} onChange={e => setResultField({ professionalBrief: e.target.value })} rows={9}
+                className="w-full rounded-xl p-3 text-sm leading-relaxed resize-y" />
+            : <p className="text-sm leading-relaxed whitespace-pre-line">{res && res.professionalBrief ? res.professionalBrief : ""}</p>}
+        </BriefSection>
+
+        {a.products && a.products.trim() && (
+          <BriefSection title="Products & services">
+            <div className="text-sm leading-relaxed whitespace-pre-line">{a.products}</div>
+          </BriefSection>
+        )}
+
+        <BriefSection title="Key details">
+          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Objectives: </span>{a.objectives.join(", ") || "—"}</div>
+          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary || "—"}</div>
+          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Deliverables: </span>{deliverablesLabel || "—"}</div>
+          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Platforms: </span>{a.platforms.join(", ") || "—"}</div>
+          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Timeline: </span>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</div>
+          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Budget: </span>{fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</div>
+          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Revisions: </span>{a.revisions}</div>
+        </BriefSection>
+
+        {(canEdit || clarify.length > 0) && (
+          <BriefSection title="Worth clarifying">
+            {canEdit
+              ? <textarea value={clarify.join("\n")} onChange={e => setResultField({ missingInfo: linesToArr(e.target.value), unclearRequirements: [], scopeGaps: [] })} rows={4}
+                  placeholder={"One point per line"} className="w-full rounded-xl p-3 text-sm resize-y" />
+              : <ul className="space-y-1.5">{clarify.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--warn)" }}>•</span><span>{d}</span></li>)}</ul>}
+          </BriefSection>
+        )}
+
+        {(canEdit || (res && res.followUpQuestions && res.followUpQuestions.length > 0)) && (
+          <BriefSection title="Questions before quoting">
+            {canEdit
+              ? <textarea value={((res && res.followUpQuestions) || []).join("\n")} onChange={e => setResultField({ followUpQuestions: linesToArr(e.target.value) })} rows={4}
+                  placeholder={"One question per line"} className="w-full rounded-xl p-3 text-sm resize-y" />
+              : <ul className="space-y-1.5">{res.followUpQuestions.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}</ul>}
+          </BriefSection>
+        )}
+
+        {(a.workingFiles || a.briefingDeck || a.brandGuidelines) && (
+          <BriefSection title="Files & links">
+            {a.workingFiles && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working files: </span>{a.workingFiles}</div>}
+            {a.briefingDeck && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Briefing deck: </span>{a.briefingDeck}</div>}
+            {a.brandGuidelines && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Brand guidelines: </span>{a.brandGuidelines}</div>}
+          </BriefSection>
+        )}
+
+        <div className="mt-8 pt-5 flex items-center justify-between" style={{ borderTop: "1px solid var(--line)" }}>
+          <div className="text-sm"><span style={{ color: "var(--muted)" }}>Briefed by </span><span className="font-medium">{a.briefer || "—"}</span></div>
+          <div className="mono text-[11px]" style={{ color: "var(--muted)" }}>Prelima · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
+        </div>
+      </div>
+    </div>
+    );
+  };
+
   if (submitState === "working" || submitState === "done") {
     return (
       <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
@@ -577,77 +654,39 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           </>) : (<>
             <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
             <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Your brief is ready.</h2>
-            <p className="mb-8" style={{ color: "var(--muted)" }}>Download a copy to share with whoever you're briefing.</p>
+            <p className="mb-8" style={{ color: "var(--muted)" }}>{editing ? "Edit the AI-written parts below, then save." : "Download a copy to share with whoever you're briefing."}</p>
             <div className="flex flex-wrap items-center gap-3">
+              {editing ? (
+                <Btn onClick={() => setEditing(false)}><Check className="w-4 h-4" /> Save changes</Btn>
+              ) : (
+                <Btn variant="secondary" onClick={() => setEditing(true)}><PenLine className="w-4 h-4" /> Edit brief</Btn>
+              )}
               <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download my brief</Btn>
               {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
             </div>
-            <p className="mono text-[11px] mt-5" style={{ color: "var(--muted)" }}>Keep a copy — handy if you're briefing other vendors too.</p>
-            <div className="pr-print-area rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
-              <div style={{ background: "var(--accent-soft)", padding: "28px 32px", borderBottom: "3px solid var(--accent)" }}>
-                <div className="mono text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--accent)" }}>Project Brief</div>
-                <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{projectName}</h1>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {a.objectives.length > 0 && <Tag tone="accent">{a.objectives[0]}{a.objectives.length > 1 ? ` +${a.objectives.length - 1}` : ""}</Tag>}
-                  {a.budgetRange && <Tag>{fmtBudget(a.budget)}</Tag>}
-                  <Tag>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</Tag>
-                </div>
-              </div>
-
-              <div style={{ padding: "28px 32px" }}>
-                <BriefSection title="The brief">
-                  <p className="text-sm leading-relaxed whitespace-pre-line">{result && result.professionalBrief ? result.professionalBrief : ""}</p>
-                </BriefSection>
-
-                {a.products && a.products.trim() && (
-                  <BriefSection title="Products & services">
-                    <div className="text-sm leading-relaxed whitespace-pre-line">{a.products}</div>
-                  </BriefSection>
-                )}
-
-                <BriefSection title="Key details">
-                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Objectives: </span>{a.objectives.join(", ") || "—"}</div>
-                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary || "—"}</div>
-                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Deliverables: </span>{deliverablesLabel || "—"}</div>
-                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Platforms: </span>{a.platforms.join(", ") || "—"}</div>
-                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Timeline: </span>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</div>
-                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Budget: </span>{fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</div>
-                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Revisions: </span>{a.revisions}</div>
-                </BriefSection>
-
-                {result && [...(result.missingInfo || []), ...(result.unclearRequirements || []), ...(result.scopeGaps || [])].length > 0 && (
-                  <BriefSection title="Worth clarifying">
-                    <ul className="space-y-1.5">
-                      {[...(result.missingInfo || []), ...(result.unclearRequirements || []), ...(result.scopeGaps || [])].map((d, i) => (
-                        <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--warn)" }}>•</span><span>{d}</span></li>
-                      ))}
-                    </ul>
-                  </BriefSection>
-                )}
-
-                {result && result.followUpQuestions && result.followUpQuestions.length > 0 && (
-                  <BriefSection title="Questions before quoting">
-                    <ul className="space-y-1.5">
-                      {result.followUpQuestions.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}
-                    </ul>
-                  </BriefSection>
-                )}
-
-                {(a.workingFiles || a.briefingDeck || a.brandGuidelines) && (
-                  <BriefSection title="Files & links">
-                    {a.workingFiles && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working files: </span>{a.workingFiles}</div>}
-                    {a.briefingDeck && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Briefing deck: </span>{a.briefingDeck}</div>}
-                    {a.brandGuidelines && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Brand guidelines: </span>{a.brandGuidelines}</div>}
-                  </BriefSection>
-                )}
-
-                <div className="mt-8 pt-5 flex items-center justify-between" style={{ borderTop: "1px solid var(--line)" }}>
-                  <div className="text-sm"><span style={{ color: "var(--muted)" }}>Briefed by </span><span className="font-medium">{a.briefer || "—"}</span></div>
-                  <div className="mono text-[11px]" style={{ color: "var(--muted)" }}>Prelima · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
-                </div>
-              </div>
-            </div>
+            <p className="mono text-[11px] mt-5 mb-1" style={{ color: "var(--muted)" }}>Keep a copy — handy if you're briefing other vendors too.</p>
+            {briefDoc(result, editing)}
           </>)}
+        </div>
+      </IntakeShell>
+    );
+  }
+
+  if (preview) {
+    const previewRes = { professionalBrief: [a.overview, a.background, a.products ? `Products / services:\n${a.products}` : ""].filter(Boolean).join("\n\n") };
+    return (
+      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
+        <div className="rise max-w-2xl">
+          <div className="mb-5">
+            <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Preview</div>
+            <h2 className="display text-2xl font-semibold">How your brief will look</h2>
+            <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>This uses your own words. Send to have AI polish the writing and flag anything missing.</p>
+          </div>
+          {briefDoc(previewRes, false)}
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Btn variant="secondary" onClick={() => setPreview(false)}><ArrowLeft className="w-4 h-4" /> Back to edit</Btn>
+            <Btn onClick={() => { setPreview(false); submit(); }}><Sparkles className="w-4 h-4" /> Send my brief</Btn>
+          </div>
         </div>
       </IntakeShell>
     );
@@ -908,9 +947,14 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
                 </button>
               ))}
             </div>
-            <Btn onClick={submit} className="mt-6 text-base px-7 py-4">
-              <Sparkles className="w-4 h-4" /> Send my brief
-            </Btn>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Btn variant="secondary" onClick={() => setPreview(true)} className="text-base px-6 py-4">
+                <Eye className="w-4 h-4" /> Preview
+              </Btn>
+              <Btn onClick={submit} className="text-base px-7 py-4">
+                <Sparkles className="w-4 h-4" /> Send my brief
+              </Btn>
+            </div>
           </Q>
         )}
 
@@ -970,8 +1014,12 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const [link] = useState(() => `prelima.app/t/${Math.random().toString(36).slice(2, 6)}`);
   const [copied, setCopied] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [preview, setPreview] = useState(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
+  const setResultField = (patch) => setResult(r => ({ ...(r || {}), ...patch }));
+  const linesToArr = (s) => s.split("\n").map(x => x.replace(/^[-•]\s*/, "").trim()).filter(Boolean);
   const toggle = (key, val) => set({ [key]: a[key].includes(val) ? a[key].filter(v => v !== val) : [...a[key], val] });
   const setDeliv = (i, patch) => set({ deliverables: a.deliverables.map((d, idx) => idx === i ? { ...d, ...patch } : d) });
   const addDeliv = () => set({ deliverables: [...a.deliverables, { qty: 1, format: "", other: "" }] });
@@ -1092,6 +1140,92 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const next = () => setStep(s => Math.min(s + 1, total - 1));
   const back = () => setStep(s => Math.max(s - 1, 0));
 
+  const briefDoc = (res, canEdit) => (
+    <div className="pr-print-area rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+      <div style={{ background: "var(--accent-soft)", padding: "28px 32px", borderBottom: "3px solid var(--accent)" }}>
+        <div className="mono text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--accent)" }}>Creative Brief</div>
+        <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{a.title || "Task brief"}</h1>
+        <div className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
+          {a.brandName}{a.brandWebsite ? ` · ${a.brandWebsite}` : ""}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {typeLabel && <Tag tone="accent">{typeLabel}</Tag>}
+          {a.deadline && <Tag>Due {a.deadline}</Tag>}
+        </div>
+      </div>
+
+      <div style={{ padding: "28px 32px" }}>
+        <BriefSection title="The brief">
+          {canEdit
+            ? <textarea value={(res && res.creativeBrief) || ""} onChange={e => setResultField({ creativeBrief: e.target.value })} rows={8}
+                className="w-full rounded-xl p-3 text-sm leading-relaxed resize-y" />
+            : <p className="text-sm leading-relaxed whitespace-pre-line">{res && res.creativeBrief ? res.creativeBrief : ""}</p>}
+        </BriefSection>
+
+        {deliverablesLabel && (
+          <BriefSection title="Deliverables">
+            <ul className="space-y-1.5">
+              {a.deliverables.filter(d => d.format).map((d, i) => (
+                <li key={i} className="text-sm flex items-baseline gap-2.5">
+                  <span className="mono font-semibold" style={{ color: "var(--accent)" }}>{d.qty}×</span>
+                  <span>{d.format === "Other" ? (d.other || "Other") : d.format}</span>
+                </li>
+              ))}
+            </ul>
+          </BriefSection>
+        )}
+
+        {(canEdit || (res && res.deliverables && res.deliverables.length > 0)) && (
+          <BriefSection title="Expected outputs">
+            {canEdit
+              ? <textarea value={((res && res.deliverables) || []).join("\n")} onChange={e => setResultField({ deliverables: linesToArr(e.target.value) })} rows={4}
+                  placeholder={"One output per line"} className="w-full rounded-xl p-3 text-sm resize-y" />
+              : <ul className="space-y-1.5">{res.deliverables.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}</ul>}
+          </BriefSection>
+        )}
+
+        {(canEdit || (res && res.keyRequirements && res.keyRequirements.length > 0)) && (
+          <BriefSection title="Key requirements">
+            {canEdit
+              ? <textarea value={((res && res.keyRequirements) || []).join("\n")} onChange={e => setResultField({ keyRequirements: linesToArr(e.target.value) })} rows={4}
+                  placeholder={"One requirement per line"} className="w-full rounded-xl p-3 text-sm resize-y" />
+              : <ul className="space-y-1.5">{res.keyRequirements.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}</ul>}
+          </BriefSection>
+        )}
+
+        {(problemLabel || audienceSummary || a.insightAnswers.some(Boolean)) && (
+          <BriefSection title="Context">
+            {problemLabel && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
+            {audienceSummary && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
+            {a.insightQuestions.map((q, i) => a.insightAnswers[i] && (
+              <div key={i} className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>{q} </span>{a.insightAnswers[i]}</div>
+            ))}
+          </BriefSection>
+        )}
+
+        {(a.references || a.referencesAvoid) && (
+          <BriefSection title="References">
+            {a.references && <div className="text-sm mb-1.5 whitespace-pre-line"><span style={{ color: "var(--muted)" }}>Follow: </span>{a.references}</div>}
+            {a.referencesAvoid && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Avoid: </span>{a.referencesAvoid}</div>}
+          </BriefSection>
+        )}
+
+        {(a.workingFiles || a.workingDeck || a.extraLinks) && (
+          <BriefSection title="Files & links">
+            {a.workingFiles && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working files: </span>{a.workingFiles}</div>}
+            {a.workingDeck && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working deck: </span>{a.workingDeck}</div>}
+            {a.extraLinks && <div className="text-sm mb-1.5 whitespace-pre-line"><span style={{ color: "var(--muted)" }}>Extra links: </span>{a.extraLinks}</div>}
+          </BriefSection>
+        )}
+
+        <div className="mt-8 pt-5 flex items-center justify-between" style={{ borderTop: "1px solid var(--line)" }}>
+          <div className="text-sm"><span style={{ color: "var(--muted)" }}>Briefed by </span><span className="font-medium">{a.briefer || "—"}</span></div>
+          <div className="mono text-[11px]" style={{ color: "var(--muted)" }}>Prelima · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
+        </div>
+      </div>
+    </div>
+  );
+
   if (submitState === "working" || submitState === "done") {
     return (
       <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer}>
@@ -1103,7 +1237,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
           </>) : (<>
             <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
             <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Brief ready.</h2>
-            <p className="mb-8" style={{ color: "var(--muted)" }}>Share the link below with whoever's doing the work, or download a copy.</p>
+            <p className="mb-8" style={{ color: "var(--muted)" }}>{editing ? "Edit the AI-written parts below, then save." : "Share the link below with whoever's doing the work, or download a copy."}</p>
             <div className="flex flex-wrap items-center gap-3 mb-3">
               <button onClick={() => { navigator.clipboard?.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                 className="flex items-center gap-2 rounded-xl px-4 py-3 mono text-xs"
@@ -1113,89 +1247,37 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              {editing ? (
+                <Btn onClick={() => setEditing(false)}><Check className="w-4 h-4" /> Save changes</Btn>
+              ) : (
+                <Btn variant="secondary" onClick={() => setEditing(true)}><PenLine className="w-4 h-4" /> Edit brief</Btn>
+              )}
               <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download PDF</Btn>
               <Btn variant="secondary" onClick={() => downloadTaskBriefDocx(a, result, typeLabel)}><FileText className="w-4 h-4" /> Download Word doc</Btn>
               {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
             </div>
-            <div className="pr-print-area rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
-              <div style={{ background: "var(--accent-soft)", padding: "28px 32px", borderBottom: "3px solid var(--accent)" }}>
-                <div className="mono text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--accent)" }}>Creative Brief</div>
-                <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{a.title || "Task brief"}</h1>
-                <div className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
-                  {a.brandName}{a.brandWebsite ? ` · ${a.brandWebsite}` : ""}
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {typeLabel && <Tag tone="accent">{typeLabel}</Tag>}
-                  {a.deadline && <Tag>Due {a.deadline}</Tag>}
-                </div>
-              </div>
-
-              <div style={{ padding: "28px 32px" }}>
-                <BriefSection title="The brief">
-                  <p className="text-sm leading-relaxed whitespace-pre-line">{result && result.creativeBrief ? result.creativeBrief : ""}</p>
-                </BriefSection>
-
-                {deliverablesLabel && (
-                  <BriefSection title="Deliverables">
-                    <ul className="space-y-1.5">
-                      {a.deliverables.filter(d => d.format).map((d, i) => (
-                        <li key={i} className="text-sm flex items-baseline gap-2.5">
-                          <span className="mono font-semibold" style={{ color: "var(--accent)" }}>{d.qty}×</span>
-                          <span>{d.format === "Other" ? (d.other || "Other") : d.format}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </BriefSection>
-                )}
-
-                {result && result.deliverables && result.deliverables.length > 0 && (
-                  <BriefSection title="Expected outputs">
-                    <ul className="space-y-1.5">
-                      {result.deliverables.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}
-                    </ul>
-                  </BriefSection>
-                )}
-
-                {result && result.keyRequirements && result.keyRequirements.length > 0 && (
-                  <BriefSection title="Key requirements">
-                    <ul className="space-y-1.5">
-                      {result.keyRequirements.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}
-                    </ul>
-                  </BriefSection>
-                )}
-
-                {(problemLabel || audienceSummary || a.insightAnswers.some(Boolean)) && (
-                  <BriefSection title="Context">
-                    {problemLabel && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
-                    {audienceSummary && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
-                    {a.insightQuestions.map((q, i) => a.insightAnswers[i] && (
-                      <div key={i} className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>{q} </span>{a.insightAnswers[i]}</div>
-                    ))}
-                  </BriefSection>
-                )}
-
-                {(a.references || a.referencesAvoid) && (
-                  <BriefSection title="References">
-                    {a.references && <div className="text-sm mb-1.5 whitespace-pre-line"><span style={{ color: "var(--muted)" }}>Follow: </span>{a.references}</div>}
-                    {a.referencesAvoid && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Avoid: </span>{a.referencesAvoid}</div>}
-                  </BriefSection>
-                )}
-
-                {(a.workingFiles || a.workingDeck || a.extraLinks) && (
-                  <BriefSection title="Files & links">
-                    {a.workingFiles && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working files: </span>{a.workingFiles}</div>}
-                    {a.workingDeck && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working deck: </span>{a.workingDeck}</div>}
-                    {a.extraLinks && <div className="text-sm mb-1.5 whitespace-pre-line"><span style={{ color: "var(--muted)" }}>Extra links: </span>{a.extraLinks}</div>}
-                  </BriefSection>
-                )}
-
-                <div className="mt-8 pt-5 flex items-center justify-between" style={{ borderTop: "1px solid var(--line)" }}>
-                  <div className="text-sm"><span style={{ color: "var(--muted)" }}>Briefed by </span><span className="font-medium">{a.briefer || "—"}</span></div>
-                  <div className="mono text-[11px]" style={{ color: "var(--muted)" }}>Prelima · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
-                </div>
-              </div>
-            </div>
+            {briefDoc(result, editing)}
           </>)}
+        </div>
+      </IntakeShell>
+    );
+  }
+
+  if (preview) {
+    const previewRes = { creativeBrief: a.description || "", deliverables: [], keyRequirements: [] };
+    return (
+      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer}>
+        <div className="rise max-w-2xl">
+          <div className="mb-5">
+            <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Preview</div>
+            <h2 className="display text-2xl font-semibold">How your brief will look</h2>
+            <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>This uses your own words. Generate to have AI polish the writing and add expected outputs.</p>
+          </div>
+          {briefDoc(previewRes, false)}
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Btn variant="secondary" onClick={() => setPreview(false)}><ArrowLeft className="w-4 h-4" /> Back to edit</Btn>
+            <Btn onClick={() => { setPreview(false); submit(); }}><Sparkles className="w-4 h-4" /> Generate brief</Btn>
+          </div>
         </div>
       </IntakeShell>
     );
@@ -1435,9 +1517,14 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                 </button>
               ))}
             </div>
-            <Btn onClick={submit} className="mt-6 text-base px-7 py-4">
-              <Sparkles className="w-4 h-4" /> Generate brief
-            </Btn>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Btn variant="secondary" onClick={() => setPreview(true)} className="text-base px-6 py-4">
+                <Eye className="w-4 h-4" /> Preview
+              </Btn>
+              <Btn onClick={submit} className="text-base px-7 py-4">
+                <Sparkles className="w-4 h-4" /> Generate brief
+              </Btn>
+            </div>
           </Q>
         )}
 
