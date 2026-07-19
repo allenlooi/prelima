@@ -448,6 +448,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const [timelineChecking, setTimelineChecking] = useState(false);
   const [editing, setEditing] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [openRow, setOpenRow] = useState(null);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   const setResultField = (patch) => setResult(r => ({ ...(r || {}), ...patch }));
@@ -608,6 +609,14 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Revisions: </span>{a.revisions}</div>
         </BriefSection>
 
+        {a.customFields.filter(c => c.label || c.value).length > 0 && (
+          <BriefSection title="More detail">
+            {a.customFields.filter(c => c.label || c.value).map((c, i) => (
+              <div key={i} className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>{c.label || "—"}: </span>{c.value}</div>
+            ))}
+          </BriefSection>
+        )}
+
         {(canEdit || clarify.length > 0) && (
           <BriefSection title="Worth clarifying">
             {canEdit
@@ -707,6 +716,49 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
       </IntakeShell>
     );
   }
+
+  const setCustom = (i, patch) => set({ customFields: a.customFields.map((c, idx) => idx === i ? { ...c, ...patch } : c) });
+  const addCustom = () => set({ customFields: [...a.customFields, { label: "", value: "" }] });
+  const removeCustom = (i) => set({ customFields: a.customFields.filter((_, idx) => idx !== i) });
+
+  // Inline editors reused by the review step so answers can be changed in place.
+  const fieldEditor = (id) => {
+    if (id === "website") return (<>
+      <SectionLabel>Business background</SectionLabel>
+      <TA value={a.background} onChange={v => set({ background: v })} placeholder="What you do, who you serve…" rows={4} autoFocus={false} />
+      <div className="mt-3"><SectionLabel>Products & services</SectionLabel>
+        <TA value={a.products} onChange={v => set({ products: v })} placeholder={"- Product one\n- Product two"} rows={3} autoFocus={false} /></div>
+    </>);
+    if (id === "overview") return <TA value={a.overview} onChange={v => set({ overview: v })} placeholder="We need help with…" rows={3} autoFocus={false} />;
+    if (id === "objectives") return <div className="flex flex-wrap gap-2">{OBJECTIVES.map(o => <Chip key={o} active={a.objectives.includes(o)} onClick={() => toggle("objectives", o)}>{o}</Chip>)}</div>;
+    if (id === "audience") return (
+      <div className="space-y-4">
+        <div><SectionLabel>Age range</SectionLabel><div className="flex flex-wrap gap-2">{AGE_BRACKETS.map(r => <Chip key={r} active={a.audienceAgeRange.includes(r)} onClick={() => toggle("audienceAgeRange", r)}>{r}</Chip>)}</div></div>
+        <div><SectionLabel>Location</SectionLabel><div className="flex flex-wrap gap-2">{LOCATIONS.map(l => <Chip key={l} active={a.audienceLocation.includes(l)} onClick={() => toggle("audienceLocation", l)}>{l}</Chip>)}</div></div>
+        <div><SectionLabel>Gender</SectionLabel><div className="flex flex-wrap gap-2">{GENDERS.map(g => <Chip key={g} active={a.audienceGender.includes(g)} onClick={() => toggle("audienceGender", g)}>{g}</Chip>)}</div></div>
+        <div><SectionLabel>Hobbies & interests</SectionLabel><div className="flex flex-wrap gap-2">{HOBBIES.map(h => <Chip key={h} active={a.audienceHobbies.includes(h)} onClick={() => toggle("audienceHobbies", h)}>{h}</Chip>)}</div></div>
+      </div>
+    );
+    if (id === "deliverables") return (<>
+      <div className="flex flex-wrap gap-2">{DELIVERABLE_OPTIONS.map(d => <Chip key={d} active={a.deliverables.includes(d)} onClick={() => toggle("deliverables", d)}>{d}</Chip>)}</div>
+      {a.deliverables.includes("Others") && <input type="text" value={a.deliverablesOther} onChange={e => set({ deliverablesOther: e.target.value })} placeholder="Type what else you need…" className="mt-2 w-full rounded-xl px-4 py-3 text-sm" />}
+    </>);
+    if (id === "platforms") return <div className="flex flex-wrap gap-2">{PLATFORMS.map(p => <Chip key={p} active={a.platforms.includes(p)} onClick={() => toggle("platforms", p)}>{p}</Chip>)}</div>;
+    if (id === "timeline") return a.timelineMode === "date"
+      ? <input type="date" value={a.timelineDate} onChange={e => set({ timelineDate: e.target.value })} className="w-full rounded-xl px-4 py-3 text-sm" />
+      : <Slider value={a.timelineWeeks} min={1} max={24} onChange={v => set({ timelineWeeks: v })} format={v => v === 24 ? "24+ weeks" : `${v} week${v > 1 ? "s" : ""}`} />;
+    if (id === "budget") return (<>
+      <SectionLabel>Currency</SectionLabel>
+      <div className="flex flex-wrap gap-2 mb-3">{CURRENCIES.map(c => <Chip key={c} active={a.currency === c} onClick={() => set({ currency: c, budgetRange: "", budget: 0 })}>{c}</Chip>)}</div>
+      <select value={a.budgetRange} onChange={e => { const range = budgetOpts.find(r => r[0] === e.target.value); set({ budgetRange: e.target.value, budget: range && range[1] !== "custom" ? range[1] : a.budget }); }} className="w-full rounded-xl px-4 py-3 text-sm">
+        <option value="" disabled>Select a budget range…</option>{budgetOpts.map(([label]) => <option key={label} value={label}>{label}</option>)}
+      </select>
+      {budgetIsCustom && <input type="number" min="0" step="500" value={a.budget || ""} onChange={e => set({ budget: Number(e.target.value) })} placeholder={`Exact budget in ${a.currency}`} className="mt-2 w-full rounded-xl px-4 py-3 text-sm" />}
+    </>);
+    if (id === "revisions") return <Slider value={a.revisions} min={1} max={5} onChange={v => set({ revisions: v })} format={v => `${v} round${v > 1 ? "s" : ""}`} />;
+    if (id === "briefer") return <input type="text" value={a.briefer} onChange={e => set({ briefer: e.target.value })} placeholder="Your name" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />;
+    return null;
+  };
 
   const s = steps[idx].id;
 
@@ -926,27 +978,45 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
         )}
 
         {s === "review" && (
-          <Q idx={idx} total={total} title="Quick check before we send." hint="Tap any answer to change it.">
+          <Q idx={idx} total={total} title="Quick check before we send." hint="Tap any answer to edit it right here.">
             <div className="space-y-2">
               {[
-                ["Website", a.website || "None", 0],
-                ["Background", a.background, 0],
-                ["Overview", a.overview, 1],
-                ["Objectives", a.objectives.join(", "), 2],
-                ["Audience", audienceSummary, 3],
-                ["Deliverables", deliverablesLabel, 4],
-                ["Timeline", a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`, 6],
-                ["Budget", `${fmtBudget(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`, 7],
-                ["Briefed by", a.briefer || "—", 10],
-              ].map(([k, v, go]) => (
-                <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
-                  style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
-                  <span className="mono text-[11px] uppercase tracking-wider w-24 shrink-0 pt-0.5" style={{ color: "var(--muted)" }}>{k}</span>
-                  <span className="text-sm flex-1 line-clamp-2">{v || "—"}</span>
-                  <PenLine className="w-3.5 h-3.5 shrink-0 mt-1" style={{ color: "var(--muted)" }} />
-                </button>
+                ["Business", "website", [a.background, a.products].filter(Boolean).join("\n\n") || "—"],
+                ["Overview", "overview", a.overview],
+                ["Objectives", "objectives", a.objectives.join(", ") || "—"],
+                ["Audience", "audience", audienceSummary || "—"],
+                ["Deliverables", "deliverables", deliverablesLabel || "—"],
+                ["Platforms", "platforms", a.platforms.join(", ") || "—"],
+                ["Timeline", "timeline", a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`],
+                ["Budget", "budget", `${fmtBudget(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`],
+                ["Revisions", "revisions", `${a.revisions} round${a.revisions > 1 ? "s" : ""}`],
+                ["Briefed by", "briefer", a.briefer || "—"],
+              ].map(([k, id, v]) => (
+                <div key={id} className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                  <button onClick={() => setOpenRow(openRow === id ? null : id)} className="w-full text-left px-4 py-3 flex items-start gap-4">
+                    <span className="mono text-[11px] uppercase tracking-wider w-24 shrink-0 pt-0.5" style={{ color: "var(--muted)" }}>{k}</span>
+                    <span className="text-sm flex-1 whitespace-pre-line" style={{ color: openRow === id ? "var(--accent)" : "var(--ink)" }}>{v || "—"}</span>
+                    <PenLine className="w-3.5 h-3.5 shrink-0 mt-1" style={{ color: "var(--muted)" }} />
+                  </button>
+                  {openRow === id && <div className="px-4 pb-4 pt-1 fade">{fieldEditor(id)}</div>}
+                </div>
               ))}
             </div>
+
+            <div className="mt-4">
+              <SectionLabel>Your own fields</SectionLabel>
+              {a.customFields.map((c, i) => (
+                <div key={i} className="flex items-start gap-2 mb-2">
+                  <input type="text" value={c.label} onChange={e => setCustom(i, { label: e.target.value })} placeholder="Label" className="w-32 shrink-0 rounded-xl px-3 py-2 text-sm" />
+                  <input type="text" value={c.value} onChange={e => setCustom(i, { value: e.target.value })} placeholder="Detail" className="flex-1 rounded-xl px-3 py-2 text-sm" />
+                  <button onClick={() => removeCustom(i)} className="p-2 shrink-0" style={{ color: "var(--muted)" }} aria-label="Remove field"><X className="w-4 h-4" /></button>
+                </div>
+              ))}
+              <button onClick={addCustom} className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
+                <Plus className="w-4 h-4" /> Add a field
+              </button>
+            </div>
+
             <div className="mt-6 flex flex-wrap gap-3">
               <Btn variant="secondary" onClick={() => setPreview(true)} className="text-base px-6 py-4">
                 <Eye className="w-4 h-4" /> Preview
@@ -1016,6 +1086,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [openRow, setOpenRow] = useState(null);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   const setResultField = (patch) => setResult(r => ({ ...(r || {}), ...patch }));
@@ -1298,6 +1369,64 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     );
   }
 
+  // Inline editors reused by the review step so answers can be changed in place
+  // without jumping back into the questionnaire.
+  const fieldEditor = (id) => {
+    if (id === "brand") return (<>
+      <input type="text" value={a.brandName} onChange={e => set({ brandName: e.target.value })} placeholder="Brand / company name" className="w-full rounded-xl px-4 py-3 text-sm mb-2" autoFocus />
+      <input type="url" value={a.brandWebsite} onChange={e => set({ brandWebsite: e.target.value })} placeholder="Website (optional)" className="w-full rounded-xl px-4 py-3 text-sm" />
+    </>);
+    if (id === "title") return <input type="text" value={a.title} onChange={e => set({ title: e.target.value })} placeholder="Project name" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />;
+    if (id === "type") return (<>
+      <div className="flex flex-wrap gap-2">{TASK_TYPES.map(t => <Chip key={t} active={a.type.includes(t)} onClick={() => toggle("type", t)}>{t}</Chip>)}</div>
+      {a.type.includes("Other") && <input type="text" value={a.typeOther} onChange={e => set({ typeOther: e.target.value })} placeholder="Type the kind of work…" className="mt-2 w-full rounded-xl px-4 py-3 text-sm" />}
+    </>);
+    if (id === "format") return (<>
+      <div className="space-y-2">{a.deliverables.map((d, i) => (
+        <div key={i}>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-xl overflow-hidden shrink-0" style={{ border: "1px solid var(--line)" }}>
+              <button onClick={() => setDeliv(i, { qty: Math.max(1, d.qty - 1) })} className="px-2.5 py-2" style={{ color: "var(--muted)" }}>−</button>
+              <span className="w-7 text-center text-sm mono">{d.qty}</span>
+              <button onClick={() => setDeliv(i, { qty: d.qty + 1 })} className="px-2.5 py-2" style={{ color: "var(--muted)" }}>+</button>
+            </div>
+            <span className="mono text-sm" style={{ color: "var(--muted)" }}>×</span>
+            <select value={d.format} onChange={e => setDeliv(i, { format: e.target.value })} className="flex-1 rounded-xl px-3 py-2 text-sm">
+              <option value="">Choose a format…</option>{DELIVERABLE_FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+            {a.deliverables.length > 1 && <button onClick={() => removeDeliv(i)} className="p-1.5" style={{ color: "var(--muted)" }}><X className="w-4 h-4" /></button>}
+          </div>
+          {d.format === "Other" && <input type="text" value={d.other || ""} onChange={e => setDeliv(i, { other: e.target.value })} placeholder="Type your format…" className="mt-1.5 w-full rounded-xl px-3 py-2 text-sm" />}
+        </div>
+      ))}</div>
+      <button onClick={addDeliv} className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}><Plus className="w-4 h-4" /> Add another</button>
+    </>);
+    if (id === "description") return <TA value={a.description} onChange={v => set({ description: v })} placeholder="We need…" rows={4} autoFocus={false} />;
+    if (id === "problem") return (<>
+      <div className="flex flex-wrap gap-2">{PROBLEM_OPTIONS.map(p => <Chip key={p} active={a.problem.includes(p)} onClick={() => toggle("problem", p)}>{p}</Chip>)}</div>
+      {a.problem.includes("Other") && <input type="text" value={a.problemOther} onChange={e => set({ problemOther: e.target.value })} placeholder="Type the problem…" className="mt-2 w-full rounded-xl px-4 py-3 text-sm" />}
+    </>);
+    if (id === "audience") return (
+      <div className="space-y-4">
+        <div><SectionLabel>Age range</SectionLabel><div className="flex flex-wrap gap-2">{AGE_BRACKETS.map(r => <Chip key={r} active={a.audienceAgeRange.includes(r)} onClick={() => toggle("audienceAgeRange", r)}>{r}</Chip>)}</div></div>
+        <div><SectionLabel>Location</SectionLabel><div className="flex flex-wrap gap-2">{LOCATIONS.map(l => <Chip key={l} active={a.audienceLocation.includes(l)} onClick={() => toggle("audienceLocation", l)}>{l}</Chip>)}</div>
+          {a.audienceLocation.includes("Other") && <input type="text" value={a.audienceLocationOther} onChange={e => set({ audienceLocationOther: e.target.value })} placeholder="Where else?" className="mt-2 w-full rounded-xl px-4 py-3 text-sm" />}</div>
+        <div><SectionLabel>Gender</SectionLabel><div className="flex flex-wrap gap-2">{GENDERS.map(g => <Chip key={g} active={a.audienceGender.includes(g)} onClick={() => toggle("audienceGender", g)}>{g}</Chip>)}</div></div>
+        <div><SectionLabel>Hobbies & interests</SectionLabel><div className="flex flex-wrap gap-2">{HOBBIES.map(h => <Chip key={h} active={a.audienceHobbies.includes(h)} onClick={() => toggle("audienceHobbies", h)}>{h}</Chip>)}</div>
+          {a.audienceHobbies.includes("Other") && <input type="text" value={a.audienceHobbiesOther} onChange={e => set({ audienceHobbiesOther: e.target.value })} placeholder="What else?" className="mt-2 w-full rounded-xl px-4 py-3 text-sm" />}</div>
+      </div>
+    );
+    if (id === "insights") return (
+      <div className="space-y-3">{a.insightQuestions.map((q, i) => (
+        <div key={i}><SectionLabel>{q}</SectionLabel>
+          <input type="text" value={a.insightAnswers[i] || ""} onChange={e => { const next = [...a.insightAnswers]; next[i] = e.target.value; set({ insightAnswers: next }); }} className="w-full rounded-xl px-4 py-3 text-sm" /></div>
+      ))}</div>
+    );
+    if (id === "deadline") return <input type="date" value={a.deadline} onChange={e => set({ deadline: e.target.value })} className="w-full rounded-xl px-4 py-3 text-sm" />;
+    if (id === "briefer") return <input type="text" value={a.briefer} onChange={e => set({ briefer: e.target.value })} placeholder="Your name" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />;
+    return null;
+  };
+
   const s = steps[idx].id;
 
   return (
@@ -1495,26 +1624,28 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "review" && (
-          <Q idx={idx} total={total} title="Quick check before we generate it." hint="Tap any answer to change it.">
+          <Q idx={idx} total={total} title="Quick check before we generate it." hint="Tap any answer to edit it right here.">
             <div className="space-y-2">
               {[
-                ["Brand", a.brandName || a.brandWebsite || "—", 0],
-                ["Title", a.title, 1],
-                ["Type", typeLabel || "—", 2],
-                ["Deliverables", deliverablesLabel || "—", 3],
-                ["Description", a.description, 4],
-                ["Problem", problemLabel || "—", 5],
-                ["Audience", audienceSummary || "—", 6],
-                ["Insights", a.insightAnswers.filter(Boolean).length > 0 ? `${a.insightAnswers.filter(Boolean).length} answered` : "—", 7],
-                ["Deadline", a.deadline || "—", 10],
-                ["Briefed by", a.briefer || "—", 11],
-              ].map(([k, v, go]) => (
-                <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
-                  style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
-                  <span className="mono text-[11px] uppercase tracking-wider w-24 shrink-0 pt-0.5" style={{ color: "var(--muted)" }}>{k}</span>
-                  <span className="text-sm flex-1 line-clamp-2">{v || "—"}</span>
-                  <PenLine className="w-3.5 h-3.5 shrink-0 mt-1" style={{ color: "var(--muted)" }} />
-                </button>
+                ["Brand", "brand", a.brandName || a.brandWebsite || "—"],
+                ["Title", "title", a.title],
+                ["Type", "type", typeLabel || "—"],
+                ["Deliverables", "format", deliverablesLabel || "—"],
+                ["Description", "description", a.description],
+                ["Problem", "problem", problemLabel || "—"],
+                ["Audience", "audience", audienceSummary || "—"],
+                ["Insights", "insights", a.insightAnswers.filter(Boolean).length > 0 ? a.insightAnswers.filter(Boolean).join(" · ") : "—"],
+                ["Deadline", "deadline", a.deadline || "—"],
+                ["Briefed by", "briefer", a.briefer || "—"],
+              ].map(([k, id, v]) => (
+                <div key={id} className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+                  <button onClick={() => setOpenRow(openRow === id ? null : id)} className="w-full text-left px-4 py-3 flex items-start gap-4">
+                    <span className="mono text-[11px] uppercase tracking-wider w-24 shrink-0 pt-0.5" style={{ color: "var(--muted)" }}>{k}</span>
+                    <span className="text-sm flex-1 whitespace-pre-line" style={{ color: openRow === id ? "var(--accent)" : "var(--ink)" }}>{v || "—"}</span>
+                    <PenLine className="w-3.5 h-3.5 shrink-0 mt-1" style={{ color: "var(--muted)" }} />
+                  </button>
+                  {openRow === id && <div className="px-4 pb-4 pt-1 fade">{fieldEditor(id)}</div>}
+                </div>
               ))}
             </div>
             <div className="mt-6 flex flex-wrap gap-3">
