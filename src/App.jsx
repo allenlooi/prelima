@@ -128,11 +128,11 @@ const quoteFor = (p, quotes) => quotes.find(q => q.projectId === p.id) || null;
 const projectValue = (p, quotes) => { const q = quoteFor(p, quotes); return q ? quoteTotal(q) : (p.budget || 0); };
 const isPaid = (p) => p.invoice && p.invoice.status === "Paid";
 
-async function callClaude(messages, { useSearch = false } = {}) {
+async function callClaude(messages, { fetchUrl = null, fast = false, maxTokens } = {}) {
   const res = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, useSearch }),
+    body: JSON.stringify({ messages, fetchUrl, fast, maxTokens }),
   });
   const data = await res.json();
   return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
@@ -434,7 +434,7 @@ const VoiceTA = ({ value, onChange, placeholder, rows = 5, cleanHint }) => {
       const out = await callClaude([{
         role: "user",
         content: `Clean up this client's ${cleanHint} into clear, natural sentences. Fix rambling, filler words and speech-to-text errors. Keep their meaning and every detail; do not add anything new. Respond ONLY with the cleaned text, nothing else.\n\n---\n${text}`
-      }]);
+      }], { fast: true, maxTokens: 600 });
       const cleaned = (out || "").trim();
       if (cleaned) { setPrev(text); onChange(cleaned); setNote("tidied"); } else setNote("failed");
     } catch { setNote("failed"); }
@@ -565,7 +565,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", via
         const text = await callClaude([{
           role: "user",
           content: `A client wants this delivered in about ${weeks <= 0 ? "less than a week" : weeks + " week(s)"}.\n\nProject: ${a.overview}\nDeliverables: ${deliverablesLabel || "—"}\nObjectives: ${a.objectives.join(", ") || "—"}\n\nIs that realistic for this scope? If it's too short, reply with ONE short friendly caution (under 25 words) naming the risk. If it's fine, reply exactly "OK".\n\nRespond ONLY with JSON: {"warning": "..."}`
-        }]);
+        }], { fast: true, maxTokens: 150 });
         const j = parseJSON(text);
         if (!cancelled) setTimelineWarning(j && j.warning && j.warning.trim().toUpperCase() !== "OK" ? j.warning.trim() : "");
       } catch {
@@ -585,7 +585,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", via
         const text = await callClaude([{
           role: "user",
           content: `You're helping a client write a project brief for a freelancer/agency. Ask 3 short, specific quick-fire questions that surface useful context the client knows but hasn't put into words. Cover angles like: the audience's relationship with the problem, what they currently use or do instead, what a great outcome looks like, and why this project matters now. Do NOT ask about past campaigns or what has flopped. Under 14 words each.\n\nBusiness: ${a.background || "—"}\nProject: ${a.overview}\nObjectives: ${a.objectives.join(", ") || "—"}\n\nRespond ONLY with JSON: {"questions": ["...", "...", "..."]}`
-        }]);
+        }], { fast: true, maxTokens: 250 });
         const j = parseJSON(text);
         if (j && Array.isArray(j.questions) && j.questions.length) set({ insightQuestions: j.questions, insightAnswers: j.questions.map(() => "") });
         else throw new Error("bad json");
@@ -603,8 +603,8 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", via
     try {
       const text = await callClaude([{
         role: "user",
-        content: `Research this company's website: ${a.website}\n\nWrite a business background ABOUT THE COMPANY — what they do, what they sell or offer, who their customers are, and how they position themselves. Write it in first person plural, as if the business is describing itself (e.g. "We're a specialty coffee roaster with three cafés\u2026").\n\nStrict rules: never mention or describe the website itself. No phrases like "the website", "the site", "their online presence", or comments on design/polish. Only talk about the business. Keep the background to 2-3 sentences.\n\nSeparately, list their products/services as short bullet points, one per line, each starting with "- ". If there are many, group and summarise into a handful of clear bullets rather than listing every item. Do NOT cram products into the background paragraph.\n\nRespond ONLY with a JSON object, no preamble, no markdown fences:\n{"background": "the 2-3 sentence background", "products": "- product or service one\\n- product or service two"}`
-      }], { useSearch: true });
+        content: `Below is the text from a company's website. Based ONLY on it, write a business background ABOUT THE COMPANY — what they do, what they sell or offer, who their customers are, and how they position themselves. Write it in first person plural, as if the business is describing itself (e.g. "We're a specialty coffee roaster with three cafés\u2026").\n\nStrict rules: never mention or describe the website itself. No phrases like "the website", "the site", "their online presence", or comments on design/polish. Only talk about the business. Keep the background to 2-3 sentences.\n\nSeparately, list their products/services as short bullet points, one per line, each starting with "- ". If there are many, group and summarise into a handful of clear bullets rather than listing every item. Do NOT cram products into the background paragraph.\n\nRespond ONLY with a JSON object, no preamble, no markdown fences:\n{"background": "the 2-3 sentence background", "products": "- product or service one\\n- product or service two"}`
+      }], { fetchUrl: a.website, fast: true, maxTokens: 500 });
       const j = parseJSON(text);
       if (j && j.background) {
         set({ background: j.background, products: j.products || "" });
@@ -1243,8 +1243,8 @@ function TaskBriefFlow({ freelancer = "My Studio", viaLink, onDone, onExit, dark
     try {
       const text = await callClaude([{
         role: "user",
-        content: `Research this company's website: ${a.brandWebsite}\n\nWrite a short "about us" describing the company in first person plural (e.g. "We're a specialty skincare brand…"), 2-3 sentences. Never mention the website itself.\n\nSeparately list their products/services as short bullets, one per line starting with "- ". If there are many, summarise into a handful.\n\nRespond ONLY with JSON: {"aboutUs": "...", "products": "- one\\n- two"}`
-      }], { useSearch: true });
+        content: `Below is the text from a company's website. Based ONLY on it, write a short "about us" describing the company in first person plural (e.g. "We're a specialty skincare brand…"), 2-3 sentences. Never mention the website itself.\n\nSeparately list their products/services as short bullets, one per line starting with "- ". If there are many, summarise into a handful.\n\nRespond ONLY with JSON: {"aboutUs": "...", "products": "- one\\n- two"}`
+      }], { fetchUrl: a.brandWebsite, fast: true, maxTokens: 500 });
       const j = parseJSON(text);
       if (j && (j.aboutUs || j.products)) { set({ aboutUs: j.aboutUs || "", products: j.products || "" }); setAiNote("Here's what we found — edit anything that's off."); }
       else setAiNote("Couldn't read that site — add a couple of lines yourself.");
@@ -1313,7 +1313,7 @@ function TaskBriefFlow({ freelancer = "My Studio", viaLink, onDone, onExit, dark
         const text = await callClaude([{
           role: "user",
           content: `You're helping someone write a creative brief. Based on what they've shared so far, ask 3 short, specific quick-fire questions that surface useful context they know but haven't put into words yet. Cover angles like: the audience's relationship with the problem, what they currently use or do instead, what a great outcome looks like, and why this audience would choose this brand over alternatives. Do NOT ask about past campaigns or what has failed/flopped before. Make each question concrete to THIS brand and audience, under 14 words.\n\nBrand: ${a.brandName || "—"}${a.brandWebsite ? ` (${a.brandWebsite})` : ""}\nTitle: ${a.title}\nType: ${typeLabel}\nDescription: ${a.description}\nProblem: ${problemLabel || "—"}\nAudience: ${audienceSummary || "—"}\n\nRespond ONLY with JSON, no preamble: {"questions": ["...", "...", "..."]}`
-        }]);
+        }], { fast: true, maxTokens: 250 });
         const j = parseJSON(text);
         if (j && Array.isArray(j.questions) && j.questions.length) {
           set({ insightQuestions: j.questions, insightAnswers: j.questions.map(() => "") });
@@ -1336,7 +1336,7 @@ function TaskBriefFlow({ freelancer = "My Studio", viaLink, onDone, onExit, dark
         const text = await callClaude([{
           role: "user",
           content: `Write ONE short example brief description (2 sentences, under 40 words) that a client of THIS brand might write, for this kind of work. Make it concrete to the brand so it's a relevant model, not generic.\n\nBrand: ${a.brandName || a.brandWebsite}\nType of work: ${typeLabel || "—"}\nProject: ${a.title || "—"}\n\nRespond ONLY with JSON: {"example": "..."}`
-        }]);
+        }], { fast: true, maxTokens: 150 });
         const j = parseJSON(text);
         if (!cancelled && j && j.example) setDescExample(j.example.trim());
       } catch { /* no example, non-fatal */ }
