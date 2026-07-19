@@ -320,11 +320,15 @@ const budgetRangeOptions = (cur) => {
   return opts;
 };
 
+const DURATIONS = ["1 month", "2 months", "3 months", "6 months (retainer)", "12 months (retainer)"];
+
 const blankAnswers = {
+  projectName: "",
   website: "", overview: "", background: "", products: "", objectives: [],
   audienceAgeRange: [], audienceLocation: [], audienceLocationOther: "",
   audienceGender: [], audienceHobbies: [], audienceHobbiesOther: "",
-  deliverables: [], platforms: [], timelineMode: "weeks", timelineWeeks: 6, timelineDate: "",
+  insightQuestions: [], insightAnswers: [],
+  deliverables: [], platforms: [], timelineMode: "weeks", timelineWeeks: 6, timelineDate: "", duration: "",
   currency: "MYR", budget: 0, budgetRange: "", budgetFlexible: true,
   revisions: 2, deliverablesOther: "",
   workingFiles: "", briefingDeck: "", brandGuidelines: "",
@@ -485,6 +489,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const [polishNote, setPolishNote] = useState("");
   const [timelineWarning, setTimelineWarning] = useState("");
   const [timelineChecking, setTimelineChecking] = useState(false);
+  const [insightsLoading, setInsightsLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [preview, setPreview] = useState(false);
   const [openRow, setOpenRow] = useState(null);
@@ -496,13 +501,16 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
 
   const steps = useMemo(() => ([
+    { id: "projectname", label: "Project name" },
     { id: "website", label: "Website & background" },
     { id: "overview", label: "Project overview" },
     { id: "objectives", label: "Objectives" },
     { id: "audience", label: "Target audience" },
+    { id: "insights", label: "Insights" },
     { id: "deliverables", label: "Deliverables" },
     { id: "platforms", label: "Platforms" },
     { id: "timeline", label: "Timeline" },
+    { id: "duration", label: "Project duration" },
     { id: "budget", label: "Budget" },
     { id: "revisions", label: "Revisions" },
     { id: "links", label: "Files & links" },
@@ -548,6 +556,27 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     }, 700);
     return () => { cancelled = true; clearTimeout(t); };
   }, [idx, a.timelineWeeks, a.timelineDate, a.timelineMode]);
+
+  // AI-guided insight questions on the Insights step, like the creative brief.
+  useEffect(() => {
+    if (steps[idx]?.id !== "insights" || a.insightQuestions.length > 0 || insightsLoading) return;
+    setInsightsLoading(true);
+    (async () => {
+      try {
+        const text = await callClaude([{
+          role: "user",
+          content: `You're helping a client write a project brief for a freelancer/agency. Ask 3 short, specific quick-fire questions that surface useful context the client knows but hasn't put into words. Cover angles like: the audience's relationship with the problem, what they currently use or do instead, what a great outcome looks like, and why this project matters now. Do NOT ask about past campaigns or what has flopped. Under 14 words each.\n\nBusiness: ${a.background || "—"}\nProject: ${a.overview}\nObjectives: ${a.objectives.join(", ") || "—"}\n\nRespond ONLY with JSON: {"questions": ["...", "...", "..."]}`
+        }]);
+        const j = parseJSON(text);
+        if (j && Array.isArray(j.questions) && j.questions.length) set({ insightQuestions: j.questions, insightAnswers: j.questions.map(() => "") });
+        else throw new Error("bad json");
+      } catch {
+        const fallback = ["What's the audience's relationship with this problem?", "What do they currently use or do instead?", "What does a great outcome look like?"];
+        set({ insightQuestions: fallback, insightAnswers: fallback.map(() => "") });
+      }
+      setInsightsLoading(false);
+    })();
+  }, [idx]);
 
   async function analyseWebsite() {
     if (!a.website) return;
@@ -601,11 +630,14 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   const canNext = () => {
     const s = steps[idx]?.id;
+    if (s === "projectname") return looksReal(a.projectName);
     if (s === "website") return looksReal(a.background, 10);
     if (s === "overview") return looksReal(a.overview, 10);
     if (s === "objectives") return a.objectives.length > 0;
     if (s === "audience") return a.audienceAgeRange.length > 0 && a.audienceLocation.length > 0 && a.audienceGender.length > 0;
+    if (s === "insights") return a.insightQuestions.length > 0 && a.insightAnswers.every(x => (x || "").trim().length > 0);
     if (s === "deliverables") return a.deliverables.length > 0 && (!a.deliverables.includes("Others") || looksReal(a.deliverablesOther));
+    if (s === "duration") return !!a.duration;
     if (s === "budget") return !!a.budgetRange && (!budgetIsCustom || a.budget > 0);
     if (s === "timeline") return a.timelineMode !== "date" || a.timelineDate;
     if (s === "briefer") return a.briefer.trim().length >= 2;
@@ -625,7 +657,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     <div className="pr-print-area rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
       <div style={{ background: "var(--accent-soft)", padding: "28px 32px", borderBottom: "3px solid var(--accent)" }}>
         <div className="mono text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--accent)" }}>Project Brief</div>
-        <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{projectName}</h1>
+        <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{a.projectName || projectName}</h1>
         <div className="mt-4 flex flex-wrap gap-2">
           {a.objectives.length > 0 && <Tag tone="accent">{a.objectives[0]}{a.objectives.length > 1 ? ` +${a.objectives.length - 1}` : ""}</Tag>}
           {a.budgetRange && <Tag>{fmtBudget(a.budget)}</Tag>}
@@ -659,9 +691,18 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Deliverables: </span>{deliverablesLabel || "—"}</div>
           <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Platforms: </span>{a.platforms.join(", ") || "—"}</div>
           <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Timeline: </span>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Duration: </span>{a.duration || "—"}</div>
           <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Budget: </span>{fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</div>
           <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Revisions: </span>{a.revisions}</div>
         </BriefSection>
+
+        {a.insightAnswers.some(Boolean) && (
+          <BriefSection title="Insights">
+            {a.insightQuestions.map((q, i) => a.insightAnswers[i] && (
+              <div key={i} className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>{q} </span>{a.insightAnswers[i]}</div>
+            ))}
+          </BriefSection>
+        )}
 
         {a.customFields.filter(c => c.label || c.value).length > 0 && (
           <BriefSection title="More detail">
@@ -757,6 +798,14 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   // Inline editors reused by the review step so answers can be changed in place.
   const fieldEditor = (id) => {
+    if (id === "projectname") return <input type="text" value={a.projectName} onChange={e => set({ projectName: e.target.value })} placeholder="Project name" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />;
+    if (id === "insights") return (
+      <div className="space-y-3">{a.insightQuestions.map((q, i) => (
+        <div key={i}><SectionLabel>{q}</SectionLabel>
+          <input type="text" value={a.insightAnswers[i] || ""} onChange={e => { const next = [...a.insightAnswers]; next[i] = e.target.value; set({ insightAnswers: next }); }} className="w-full rounded-xl px-4 py-3 text-sm" /></div>
+      ))}</div>
+    );
+    if (id === "duration") return <div className="flex flex-wrap gap-2">{DURATIONS.map(d => <Chip key={d} active={a.duration === d} onClick={() => set({ duration: d })}>{d}</Chip>)}</div>;
     if (id === "website") return (<>
       <SectionLabel>Business background</SectionLabel>
       <TA value={a.background} onChange={v => set({ background: v })} placeholder="What you do, who you serve…" rows={4} autoFocus={false} />
@@ -799,6 +848,13 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   return (
     <IntakeShell pct={pct} saved={saved} onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
       <div className="max-w-2xl w-full">
+        {s === "projectname" && (
+          <Q idx={idx} total={total} title="What's the project called?" hint="A short name for this project — it goes at the top of your brief.">
+            <input type="text" value={a.projectName} onChange={e => set({ projectName: e.target.value })}
+              placeholder="e.g. Cold brew launch campaign" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+          </Q>
+        )}
+
         {s === "website" && (
           <Q idx={idx} total={total} title="Let's start with your business." hint="Paste your website and AI writes your business background for you. No website? You can type it instead.">
             <div className="flex flex-col md:flex-row gap-3">
@@ -890,6 +946,26 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           </Q>
         )}
 
+        {s === "insights" && (
+          <Q idx={idx} total={total} title="Any insights that could help?" hint="A few quick questions based on what you've told us so far.">
+            {insightsLoading ? (
+              <div className="flex items-center gap-2 text-sm" style={{ color: "var(--muted)" }}>
+                <Loader2 className="w-4 h-4 animate-spin" /> Thinking of a few questions…
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {a.insightQuestions.map((q, i) => (
+                  <div key={i}>
+                    <SectionLabel>{q}</SectionLabel>
+                    <input type="text" value={a.insightAnswers[i] || ""} onChange={e => { const next = [...a.insightAnswers]; next[i] = e.target.value; set({ insightAnswers: next }); }}
+                      placeholder="Your answer…" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus={i === 0} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Q>
+        )}
+
         {s === "deliverables" && (
           <Q idx={idx} total={total} title="What do you need made?" hint="Select all that apply.">
             <div className="flex flex-wrap gap-2.5">
@@ -941,6 +1017,14 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
                 <span className="text-sm" style={{ color: "var(--ink)" }}>{timelineWarning}</span>
               </div>
             )}
+          </Q>
+        )}
+
+        {s === "duration" && (
+          <Q idx={idx} total={total} title="How long is the project?" hint="One-off or ongoing — this helps scope the engagement.">
+            <div className="flex flex-wrap gap-2.5">
+              {DURATIONS.map(d => <Chip key={d} active={a.duration === d} onClick={() => set({ duration: d })}>{d}</Chip>)}
+            </div>
           </Q>
         )}
 
@@ -1015,13 +1099,16 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           <Q idx={idx} total={total} title="Quick check before we send." hint="Tap any answer to edit it right here.">
             <div className="space-y-2">
               {[
+                ["Project", "projectname", a.projectName || "—"],
                 ["Business", "website", [a.background, a.products].filter(Boolean).join("\n\n") || "—"],
                 ["Overview", "overview", a.overview],
                 ["Objectives", "objectives", a.objectives.join(", ") || "—"],
                 ["Audience", "audience", audienceSummary || "—"],
+                ["Insights", "insights", a.insightAnswers.filter(Boolean).length > 0 ? a.insightAnswers.filter(Boolean).join(" · ") : "—"],
                 ["Deliverables", "deliverables", deliverablesLabel || "—"],
                 ["Platforms", "platforms", a.platforms.join(", ") || "—"],
                 ["Timeline", "timeline", a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`],
+                ["Duration", "duration", a.duration || "—"],
                 ["Budget", "budget", `${fmtBudget(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`],
                 ["Revisions", "revisions", `${a.revisions} round${a.revisions > 1 ? "s" : ""}`],
                 ["Briefed by", "briefer", a.briefer || "—"],
@@ -1057,7 +1144,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           </Q>
         )}
 
-        {s !== "review" && (
+        {s !== "review" && !(s === "insights" && insightsLoading) && (
           <div className="mt-8 flex items-center gap-3">
             {idx > 0 && <Btn variant="secondary" onClick={back} aria-label="Back"><ArrowLeft className="w-4 h-4" /></Btn>}
             <Btn onClick={next} disabled={!canNext()}>Continue <ArrowRight className="w-4 h-4" /></Btn>
