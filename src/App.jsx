@@ -165,7 +165,9 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
   });
 
   const problemLabel = (a.problem || []).map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
-  const deliverablesLabel = (a.deliverables || []).filter(d => d.format).map(d => `${d.qty}× ${d.format === "Other" ? (d.other || "Other") : d.format}`).join(", ");
+  const deliverablesLabel = a.proposeDeliverables ? "To be proposed by the creative" : (a.deliverables || []).filter(d => d.format).map(d => `${d.qty}× ${d.format === "Other" ? (d.other || "Other") : d.format}`).join(", ");
+  const cbBudgetLabel = a.budgetScope === "retainer" ? "Part of an existing project / retainer" : (a.budgetRange || "—");
+  const cbDeadlineLabel = a.deadlineMode === "recurring" ? (a.deadlineCadence ? `${a.deadlineCadence} (ongoing)` : "Recurring") : (a.deadline || "—");
   const locationLabel = (a.audienceLocation || []).map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = (a.audienceHobbies || []).map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
   const audienceSummary = [
@@ -205,7 +207,8 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
         detail("Website", a.brandWebsite),
         detail("Type", typeLabel),
         detail("Deliverables", deliverablesLabel),
-        detail("Deadline", a.deadline),
+        detail("Budget", cbBudgetLabel),
+        detail("Timeline", cbDeadlineLabel),
         detail("Problem", problemLabel),
         detail("Audience", audienceSummary),
         ...insightParagraphs,
@@ -337,10 +340,12 @@ const LOCATIONS = ["Malaysia", "Singapore", "Southeast Asia", "Asia Pacific", "E
 const GENDERS = ["Male", "Female"];
 const HOBBIES = ["Fitness", "Travel", "Fashion & beauty", "Food & dining", "Technology", "Gaming", "Music", "Reading", "Outdoors", "Wellness", "Other"];
 
+const CADENCES = ["Weekly", "Fortnightly", "Monthly"];
+
 const blankTaskAnswers = {
   brandName: "", brandWebsite: "", aboutUs: "", products: "",
   title: "", type: [], typeOther: "",
-  deliverables: [{ qty: 1, format: "", other: "" }],
+  deliverables: [{ qty: 1, format: "", other: "" }], proposeDeliverables: false,
   description: "",
   problem: [], problemOther: "",
   audienceAgeRange: [], audienceLocation: [], audienceLocationOther: "",
@@ -348,7 +353,8 @@ const blankTaskAnswers = {
   insightQuestions: [], insightAnswers: [],
   references: "", referencesAvoid: "",
   workingFiles: "", workingDeck: "", extraLinks: "",
-  deadline: "",
+  budgetScope: "oneoff", currency: "MYR", budgetRange: "", budget: 0,
+  deadlineMode: "date", deadline: "", deadlineCadence: "",
   briefer: "",
 };
 
@@ -1112,6 +1118,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
   const [openRow, setOpenRow] = useState(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiNote, setAiNote] = useState("");
+  const [descExample, setDescExample] = useState("");
   const doneRef = useRef(false);
 
   async function analyseBrand() {
@@ -1150,6 +1157,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
     { id: "insights", label: "Insights" },
     { id: "references", label: "References" },
     { id: "links", label: "Working files & links" },
+    { id: "budget", label: "Budget" },
     { id: "deadline", label: "Deadline" },
     { id: "briefer", label: "Your name" },
     { id: "review", label: "Review" },
@@ -1159,7 +1167,15 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
   const total = steps.length;
   const pct = step < 0 ? 0 : Math.round((step / total) * 100);
   const typeLabel = a.type.map(t => t === "Other" ? (a.typeOther || "Other") : t).join(", ");
-  const deliverablesLabel = a.deliverables.filter(d => d.format).map(d => `${d.qty}× ${d.format === "Other" ? (d.other || "Other") : d.format}`).join(", ");
+  const deliverablesLabel = a.proposeDeliverables
+    ? "Creative to propose"
+    : a.deliverables.filter(d => d.format).map(d => `${d.qty}× ${d.format === "Other" ? (d.other || "Other") : d.format}`).join(", ");
+  const curSym = CURRENCY_SYMBOL[a.currency] || (a.currency + " ");
+  const fmtBudget = (n) => curSym + Number(n || 0).toLocaleString();
+  const budgetOpts = budgetRangeOptions(a.currency);
+  const budgetIsCustom = (() => { const o = budgetOpts.find(r => r[0] === a.budgetRange); return o && o[1] === "custom"; })();
+  const budgetLabel = a.budgetScope === "retainer" ? "Part of an existing project / retainer" : (a.budgetRange || "—");
+  const deadlineLabel = a.deadlineMode === "recurring" ? (a.deadlineCadence ? `${a.deadlineCadence} (ongoing)` : "Recurring") : (a.deadline || "—");
   const problemLabel = a.problem.map(p => p === "Other" ? (a.problemOther || "Other") : p).join(", ");
   const locationLabel = a.audienceLocation.map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
   const hobbyLabel = a.audienceHobbies.map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
@@ -1192,6 +1208,24 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
       }
       setInsightsLoading(false);
     })();
+  }, [idx]);
+
+  // On the description step, generate a short brand-specific example so the blank box
+  // has a concrete, relevant model to follow.
+  useEffect(() => {
+    if (steps[idx]?.id !== "description" || descExample || !(a.brandName || a.brandWebsite)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const text = await callClaude([{
+          role: "user",
+          content: `Write ONE short example brief description (2 sentences, under 40 words) that a client of THIS brand might write, for this kind of work. Make it concrete to the brand so it's a relevant model, not generic.\n\nBrand: ${a.brandName || a.brandWebsite}\nType of work: ${typeLabel || "—"}\nProject: ${a.title || "—"}\n\nRespond ONLY with JSON: {"example": "..."}`
+        }]);
+        const j = parseJSON(text);
+        if (!cancelled && j && j.example) setDescExample(j.example.trim());
+      } catch { /* no example, non-fatal */ }
+    })();
+    return () => { cancelled = true; };
   }, [idx]);
 
   // The brief exists as-is from the user's own words. AI is opt-in on the preview page.
@@ -1242,12 +1276,13 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
     if (s === "brand") return looksReal(a.brandName);
     if (s === "title") return looksReal(a.title);
     if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || looksReal(a.typeOther));
-    if (s === "format") return a.deliverables.some(d => d.format && (d.format !== "Other" || looksReal(d.other)));
+    if (s === "format") return a.proposeDeliverables || a.deliverables.some(d => d.format && (d.format !== "Other" || looksReal(d.other)));
     if (s === "description") return looksReal(a.description, 10);
     if (s === "problem") return a.problem.length > 0 && (!a.problem.includes("Other") || looksReal(a.problemOther));
     if (s === "audience") return a.audienceAgeRange.length > 0 && a.audienceLocation.length > 0 && a.audienceGender.length > 0;
     if (s === "insights") return a.insightQuestions.length > 0 && a.insightAnswers.every(x => (x || "").trim().length > 0);
-    if (s === "deadline") return a.deadline.trim().length > 0;
+    if (s === "budget") return a.budgetScope === "retainer" || (!!a.budgetRange && (!budgetIsCustom || a.budget > 0));
+    if (s === "deadline") return a.deadlineMode === "recurring" ? !!a.deadlineCadence : a.deadline.trim().length > 0;
     if (s === "briefer") return a.briefer.trim().length >= 2;
     // references & links stay optional — forcing URLs that may not exist creates junk data.
     return true;
@@ -1266,7 +1301,8 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {typeLabel && <Tag tone="accent">{typeLabel}</Tag>}
-          {a.deadline && <Tag>Due {a.deadline}</Tag>}
+          {deadlineLabel !== "—" && <Tag>{a.deadlineMode === "recurring" ? deadlineLabel : `Due ${a.deadline}`}</Tag>}
+          {a.budgetScope !== "retainer" && a.budgetRange && <Tag>{a.budgetRange}</Tag>}
         </div>
       </div>
 
@@ -1292,14 +1328,16 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
 
         {deliverablesLabel && (
           <BriefSection title="Deliverables">
-            <ul className="space-y-1.5">
-              {a.deliverables.filter(d => d.format).map((d, i) => (
-                <li key={i} className="text-sm flex items-baseline gap-2.5">
-                  <span className="mono font-semibold" style={{ color: "var(--accent)" }}>{d.qty}×</span>
-                  <span>{d.format === "Other" ? (d.other || "Other") : d.format}</span>
-                </li>
-              ))}
-            </ul>
+            {a.proposeDeliverables
+              ? <p className="text-sm">To be proposed by the creative.</p>
+              : <ul className="space-y-1.5">
+                  {a.deliverables.filter(d => d.format).map((d, i) => (
+                    <li key={i} className="text-sm flex items-baseline gap-2.5">
+                      <span className="mono font-semibold" style={{ color: "var(--accent)" }}>{d.qty}×</span>
+                      <span>{d.format === "Other" ? (d.other || "Other") : d.format}</span>
+                    </li>
+                  ))}
+                </ul>}
           </BriefSection>
         )}
 
@@ -1321,10 +1359,12 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
           </BriefSection>
         )}
 
-        {(problemLabel || audienceSummary || a.insightAnswers.some(Boolean)) && (
+        {(problemLabel || audienceSummary || a.insightAnswers.some(Boolean) || budgetLabel !== "—" || deadlineLabel !== "—") && (
           <BriefSection title="Context">
             {problemLabel && <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
             {audienceSummary && <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
+            {budgetLabel !== "—" && <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Budget: </span>{budgetLabel}</div>}
+            {deadlineLabel !== "—" && <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Timeline: </span>{deadlineLabel}</div>}
             {a.insightQuestions.map((q, i) => a.insightAnswers[i] && (
               <div key={i} className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>{q} </span>{a.insightAnswers[i]}</div>
             ))}
@@ -1458,7 +1498,28 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
           <input type="text" value={a.insightAnswers[i] || ""} onChange={e => { const next = [...a.insightAnswers]; next[i] = e.target.value; set({ insightAnswers: next }); }} className="w-full rounded-xl px-4 py-3 text-sm" /></div>
       ))}</div>
     );
-    if (id === "deadline") return <input type="date" value={a.deadline} onChange={e => set({ deadline: e.target.value })} className="w-full rounded-xl px-4 py-3 text-sm" />;
+    if (id === "budget") return (<>
+      <button onClick={() => set({ budgetScope: a.budgetScope === "retainer" ? "oneoff" : "retainer" })} className="text-sm underline underline-offset-2 mb-2" style={{ color: a.budgetScope === "retainer" ? "var(--accent)" : "var(--muted)" }}>
+        {a.budgetScope === "retainer" ? "✓ Part of an existing project / retainer" : "Mark as part of an existing project / retainer"}
+      </button>
+      {a.budgetScope !== "retainer" && (<>
+        <div className="flex flex-wrap gap-2 mb-2">{CURRENCIES.map(c => <Chip key={c} active={a.currency === c} onClick={() => set({ currency: c, budgetRange: "", budget: 0 })}>{c}</Chip>)}</div>
+        <select value={a.budgetRange} onChange={e => { const range = budgetOpts.find(r => r[0] === e.target.value); set({ budgetRange: e.target.value, budget: range && range[1] !== "custom" ? range[1] : a.budget }); }} className="w-full rounded-xl px-4 py-3 text-sm">
+          <option value="" disabled>Select a range…</option>{budgetOpts.map(([label]) => <option key={label} value={label}>{label}</option>)}
+        </select>
+      </>)}
+    </>);
+    if (id === "deadline") return (<>
+      <div className="flex rounded-xl p-0.5 mb-3 w-fit" style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+        {[["date", "One-off date"], ["recurring", "Recurring"]].map(([m, label]) => (
+          <button key={m} onClick={() => set({ deadlineMode: m })} className="px-3 py-1.5 rounded-[10px] text-xs font-medium"
+            style={a.deadlineMode === m ? { background: "var(--surface)", boxShadow: "var(--shadow)", color: "var(--ink)" } : { color: "var(--muted)" }}>{label}</button>
+        ))}
+      </div>
+      {a.deadlineMode === "recurring"
+        ? <div className="flex flex-wrap gap-2">{CADENCES.map(c => <Chip key={c} active={a.deadlineCadence === c} onClick={() => set({ deadlineCadence: c })}>{c}</Chip>)}</div>
+        : <input type="date" value={a.deadline} onChange={e => set({ deadline: e.target.value })} className="w-full rounded-xl px-4 py-3 text-sm" />}
+    </>);
     if (id === "briefer") return <input type="text" value={a.briefer} onChange={e => set({ briefer: e.target.value })} placeholder="Your name" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />;
     return null;
   };
@@ -1521,6 +1582,17 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
 
         {s === "format" && (
           <Q idx={idx} total={total} title="What are the deliverables?" hint="How many of each, and in what format. Add a row for each type — e.g. 5× Reel (9:16), 2× Carousel.">
+            <button onClick={() => set({ proposeDeliverables: !a.proposeDeliverables })}
+              className="w-full text-left rounded-xl px-4 py-3 mb-4 flex items-center gap-3"
+              style={{ background: a.proposeDeliverables ? "var(--accent-soft)" : "var(--surface)", border: `1px solid ${a.proposeDeliverables ? "var(--accent)" : "var(--line)"}` }}>
+              <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ border: `1px solid ${a.proposeDeliverables ? "var(--accent)" : "var(--line)"}`, background: a.proposeDeliverables ? "var(--accent)" : "transparent" }}>
+                {a.proposeDeliverables && <Check className="w-3.5 h-3.5" style={{ color: "var(--accent-ink)" }} />}
+              </span>
+              <span className="text-sm">Not sure yet — let the creative propose the deliverables</span>
+            </button>
+            {a.proposeDeliverables ? (
+              <p className="text-sm" style={{ color: "var(--muted)" }}>Great — the creative will suggest what's needed. You can still add any you know below by unticking this.</p>
+            ) : (<>
             <div className="space-y-3">
               {a.deliverables.map((d, i) => (
                 <div key={i} className="fade">
@@ -1551,12 +1623,19 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
             <button onClick={addDeliv} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
               <Plus className="w-4 h-4" /> Add another
             </button>
+            </>)}
           </Q>
         )}
 
         {s === "description" && (
           <Q idx={idx} total={total} title="What needs to be made?" hint="Describe the task like you would to a teammate. Type or speak.">
             <VoiceTA value={a.description} onChange={v => set({ description: v })} placeholder="We need…" cleanHint="task description" />
+            {descExample && !a.description && (
+              <div className="mt-3 rounded-xl p-3 text-sm flex items-start gap-2 fade" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+                <Sparkles className="w-4 h-4 shrink-0 mt-0.5" />
+                <span><span className="font-medium">Example:</span> {descExample} <button onClick={() => set({ description: descExample })} className="underline underline-offset-2 ml-1">Use this</button></span>
+              </div>
+            )}
           </Q>
         )}
 
@@ -1663,10 +1742,54 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
           </Q>
         )}
 
+        {s === "budget" && (
+          <Q idx={idx} total={total} title="What's the budget?" hint="A one-time budget for this brief — a range is fine.">
+            <button onClick={() => set({ budgetScope: a.budgetScope === "retainer" ? "oneoff" : "retainer" })}
+              className="w-full text-left rounded-xl px-4 py-3 mb-5 flex items-center gap-3"
+              style={{ background: a.budgetScope === "retainer" ? "var(--accent-soft)" : "var(--surface)", border: `1px solid ${a.budgetScope === "retainer" ? "var(--accent)" : "var(--line)"}` }}>
+              <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ border: `1px solid ${a.budgetScope === "retainer" ? "var(--accent)" : "var(--line)"}`, background: a.budgetScope === "retainer" ? "var(--accent)" : "transparent" }}>
+                {a.budgetScope === "retainer" && <Check className="w-3.5 h-3.5" style={{ color: "var(--accent-ink)" }} />}
+              </span>
+              <span className="text-sm">This is part of an existing project / retainer — just briefing, no budget</span>
+            </button>
+            {a.budgetScope !== "retainer" && (<>
+              <SectionLabel>Currency</SectionLabel>
+              <div className="flex flex-wrap gap-2.5 mb-6">
+                {CURRENCIES.map(c => <Chip key={c} active={a.currency === c} onClick={() => set({ currency: c, budgetRange: "", budget: 0 })}>{c}</Chip>)}
+              </div>
+              <SectionLabel>Range</SectionLabel>
+              <select value={a.budgetRange} onChange={e => { const range = budgetOpts.find(r => r[0] === e.target.value); set({ budgetRange: e.target.value, budget: range && range[1] !== "custom" ? range[1] : a.budget }); }}
+                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }}>
+                <option value="" disabled>Select a budget range…</option>
+                {budgetOpts.map(([label]) => <option key={label} value={label}>{label}</option>)}
+              </select>
+              {budgetIsCustom && (
+                <input type="number" min="0" step="500" value={a.budget || ""} onChange={e => set({ budget: Number(e.target.value) })}
+                  placeholder={`Exact budget in ${a.currency}`} className="mt-3 w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} />
+              )}
+            </>)}
+          </Q>
+        )}
+
         {s === "deadline" && (
-          <Q idx={idx} total={total} title="When do you need it by?" hint="Pick the date this is due.">
-            <input type="date" value={a.deadline} onChange={e => set({ deadline: e.target.value })}
-              className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+          <Q idx={idx} total={total} title="When do you need it?" hint="A one-off deadline, or a recurring cadence for ongoing content.">
+            <div className="flex rounded-xl p-0.5 mb-6 w-fit" style={{ background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+              {[["date", "One-off date"], ["recurring", "Recurring"]].map(([m, label]) => (
+                <button key={m} onClick={() => set({ deadlineMode: m })}
+                  className="px-3.5 py-1.5 rounded-[10px] text-xs font-medium transition-all"
+                  style={a.deadlineMode === m ? { background: "var(--surface)", boxShadow: "var(--shadow)", color: "var(--ink)" } : { color: "var(--muted)" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {a.deadlineMode === "recurring" ? (
+              <div className="flex flex-wrap gap-2.5">
+                {CADENCES.map(c => <Chip key={c} active={a.deadlineCadence === c} onClick={() => set({ deadlineCadence: c })}>{c}</Chip>)}
+              </div>
+            ) : (
+              <input type="date" value={a.deadline} onChange={e => set({ deadline: e.target.value })}
+                className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            )}
           </Q>
         )}
 
@@ -1690,7 +1813,8 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
                 ["Problem", "problem", problemLabel || "—"],
                 ["Audience", "audience", audienceSummary || "—"],
                 ["Insights", "insights", a.insightAnswers.filter(Boolean).length > 0 ? a.insightAnswers.filter(Boolean).join(" · ") : "—"],
-                ["Deadline", "deadline", a.deadline || "—"],
+                ["Budget", "budget", budgetLabel],
+                ["Deadline", "deadline", deadlineLabel],
                 ["Briefed by", "briefer", a.briefer || "—"],
               ].map(([k, id, v]) => (
                 <div key={id} className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
