@@ -82,8 +82,8 @@ const ThemeStyles = () => (
     .pr-print-only { display: none; }
     @media print {
       body * { visibility: hidden !important; }
-      .pr-print-area, .pr-print-area * { visibility: visible !important; }
-      .pr-print-area { position: absolute !important; left: 0; top: 0; width: 100%; margin: 0; padding: 24px; box-shadow: none !important; border: none !important; }
+      .pr-print-area, .pr-print-area * { visibility: visible !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      .pr-print-area { position: absolute !important; left: 0; top: 0; width: 100%; margin: 0; box-shadow: none !important; }
       .pr-print-only { display: block !important; }
     }
   `}</style>
@@ -175,6 +175,7 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
         detail("Working files", a.workingFiles),
         detail("Working deck", a.workingDeck),
         detail("Extra links", a.extraLinks),
+        detail("Briefed by", a.briefer),
       ],
     }],
   });
@@ -224,6 +225,14 @@ const SectionLabel = ({ children }) => (
   <div className="mono text-[11px] font-medium uppercase tracking-[0.14em] mb-2" style={{ color: "var(--muted)" }}>{children}</div>
 );
 
+/* A titled section inside the designed brief document (accent heading + body). */
+const BriefSection = ({ title, children }) => (
+  <div className="mb-6">
+    <div className="mono text-[11px] font-medium uppercase tracking-[0.14em] mb-2.5" style={{ color: "var(--accent)" }}>{title}</div>
+    {children}
+  </div>
+);
+
 /* ------------------------------------------------------------------ */
 /* Client intake flow — the signature experience                       */
 /* ------------------------------------------------------------------ */
@@ -267,6 +276,7 @@ const blankTaskAnswers = {
   references: "", referencesAvoid: "",
   workingFiles: "", workingDeck: "", extraLinks: "",
   deadline: "",
+  briefer: "",
 };
 
 const Chip = ({ active, children, onClick }) => (
@@ -765,6 +775,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
     { id: "references", label: "References" },
     { id: "links", label: "Working files & links" },
     { id: "deadline", label: "Deadline" },
+    { id: "briefer", label: "Your name" },
     { id: "review", label: "Review" },
   ]), []);
 
@@ -822,7 +833,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
       insightQuestions: a.insightQuestions, insightAnswers: a.insightAnswers,
       references: a.references, referencesAvoid: a.referencesAvoid,
       workingFiles: a.workingFiles, workingDeck: a.workingDeck, extraLinks: a.extraLinks,
-      deadline: a.deadline,
+      deadline: a.deadline, briefer: a.briefer,
       status: "Ready", created: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
       link, brief,
     });
@@ -849,12 +860,17 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 
   const canNext = () => {
     const s = steps[idx]?.id;
-    if (s === "brand") return a.brandWebsite.trim().length > 0 || a.brandName.trim().length > 0;
+    if (s === "brand") return a.brandName.trim().length > 0;
     if (s === "title") return a.title.trim().length > 0;
     if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || a.typeOther.trim().length > 0);
     if (s === "format") return a.deliverables.some(d => d.format && (d.format !== "Other" || (d.other || "").trim().length > 0));
     if (s === "description") return a.description.trim().length > 0;
-    if (s === "problem") return !a.problem.includes("Other") || a.problemOther.trim().length > 0;
+    if (s === "problem") return a.problem.length > 0 && (!a.problem.includes("Other") || a.problemOther.trim().length > 0);
+    if (s === "audience") return a.audienceAgeRange.length > 0 && a.audienceLocation.length > 0 && a.audienceGender.length > 0;
+    if (s === "insights") return a.insightQuestions.length > 0 && a.insightAnswers.every(x => (x || "").trim().length > 0);
+    if (s === "deadline") return a.deadline.trim().length > 0;
+    if (s === "briefer") return a.briefer.trim().length > 0;
+    // references & links stay optional — forcing URLs that may not exist creates junk data.
     return true;
   };
 
@@ -864,7 +880,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
   if (submitState === "working" || submitState === "done") {
     return (
       <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer}>
-        <div className="rise max-w-xl">
+        <div className="rise max-w-2xl">
           {submitState === "working" ? (<>
             <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
             <h2 className="display text-3xl font-semibold mb-3">Structuring your brief…</h2>
@@ -886,31 +902,83 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
               <Btn variant="secondary" onClick={() => downloadTaskBriefDocx(a, result, typeLabel)}><FileText className="w-4 h-4" /> Download Word doc</Btn>
               {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
             </div>
-            <div className="pr-print-area pr-print-only">
-              <h1 className="display text-2xl font-semibold mb-4">{a.title || "Task brief"}</h1>
-              <p style={{ whiteSpace: "pre-wrap" }}>{result && result.creativeBrief ? result.creativeBrief : ""}</p>
-              {result && result.deliverables && result.deliverables.length > 0 && (<>
-                <h2 className="display text-lg font-semibold mt-6 mb-2">Deliverables</h2>
-                <ul>{result.deliverables.map((d, i) => <li key={i}>{d}</li>)}</ul>
-              </>)}
-              {result && result.keyRequirements && result.keyRequirements.length > 0 && (<>
-                <h2 className="display text-lg font-semibold mt-6 mb-2">Key requirements</h2>
-                <ul>{result.keyRequirements.map((d, i) => <li key={i}>{d}</li>)}</ul>
-              </>)}
-              <h2 className="display text-lg font-semibold mt-6 mb-2">Details</h2>
-              <p>Brand: {a.brandName || "—"}</p>
-              <p>Website: {a.brandWebsite || "—"}</p>
-              <p>Type: {typeLabel || "—"}</p>
-              <p>Deliverables: {deliverablesLabel || "—"}</p>
-              <p>Deadline: {a.deadline || "—"}</p>
-              <p>Problem: {problemLabel || "—"}</p>
-              <p>Audience: {audienceSummary || "—"}</p>
-              {a.insightQuestions.map((q, i) => a.insightAnswers[i] && <p key={i}>{q} {a.insightAnswers[i]}</p>)}
-              <p>References: {a.references || "—"}</p>
-              <p>Avoid: {a.referencesAvoid || "—"}</p>
-              <p>Working files: {a.workingFiles || "—"}</p>
-              <p>Working deck: {a.workingDeck || "—"}</p>
-              <p>Extra links: {a.extraLinks || "—"}</p>
+            <div className="pr-print-area rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+              <div style={{ background: "var(--accent-soft)", padding: "28px 32px", borderBottom: "3px solid var(--accent)" }}>
+                <div className="mono text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--accent)" }}>Creative Brief</div>
+                <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{a.title || "Task brief"}</h1>
+                <div className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
+                  {a.brandName}{a.brandWebsite ? ` · ${a.brandWebsite}` : ""}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {typeLabel && <Tag tone="accent">{typeLabel}</Tag>}
+                  {a.deadline && <Tag>Due {a.deadline}</Tag>}
+                </div>
+              </div>
+
+              <div style={{ padding: "28px 32px" }}>
+                <BriefSection title="The brief">
+                  <p className="text-sm leading-relaxed whitespace-pre-line">{result && result.creativeBrief ? result.creativeBrief : ""}</p>
+                </BriefSection>
+
+                {deliverablesLabel && (
+                  <BriefSection title="Deliverables">
+                    <ul className="space-y-1.5">
+                      {a.deliverables.filter(d => d.format).map((d, i) => (
+                        <li key={i} className="text-sm flex items-baseline gap-2.5">
+                          <span className="mono font-semibold" style={{ color: "var(--accent)" }}>{d.qty}×</span>
+                          <span>{d.format === "Other" ? (d.other || "Other") : d.format}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </BriefSection>
+                )}
+
+                {result && result.deliverables && result.deliverables.length > 0 && (
+                  <BriefSection title="Expected outputs">
+                    <ul className="space-y-1.5">
+                      {result.deliverables.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}
+                    </ul>
+                  </BriefSection>
+                )}
+
+                {result && result.keyRequirements && result.keyRequirements.length > 0 && (
+                  <BriefSection title="Key requirements">
+                    <ul className="space-y-1.5">
+                      {result.keyRequirements.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}
+                    </ul>
+                  </BriefSection>
+                )}
+
+                {(problemLabel || audienceSummary || a.insightAnswers.some(Boolean)) && (
+                  <BriefSection title="Context">
+                    {problemLabel && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
+                    {audienceSummary && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
+                    {a.insightQuestions.map((q, i) => a.insightAnswers[i] && (
+                      <div key={i} className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>{q} </span>{a.insightAnswers[i]}</div>
+                    ))}
+                  </BriefSection>
+                )}
+
+                {(a.references || a.referencesAvoid) && (
+                  <BriefSection title="References">
+                    {a.references && <div className="text-sm mb-1.5 whitespace-pre-line"><span style={{ color: "var(--muted)" }}>Follow: </span>{a.references}</div>}
+                    {a.referencesAvoid && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Avoid: </span>{a.referencesAvoid}</div>}
+                  </BriefSection>
+                )}
+
+                {(a.workingFiles || a.workingDeck || a.extraLinks) && (
+                  <BriefSection title="Files & links">
+                    {a.workingFiles && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working files: </span>{a.workingFiles}</div>}
+                    {a.workingDeck && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working deck: </span>{a.workingDeck}</div>}
+                    {a.extraLinks && <div className="text-sm mb-1.5 whitespace-pre-line"><span style={{ color: "var(--muted)" }}>Extra links: </span>{a.extraLinks}</div>}
+                  </BriefSection>
+                )}
+
+                <div className="mt-8 pt-5 flex items-center justify-between" style={{ borderTop: "1px solid var(--line)" }}>
+                  <div className="text-sm"><span style={{ color: "var(--muted)" }}>Briefed by </span><span className="font-medium">{a.briefer || "—"}</span></div>
+                  <div className="mono text-[11px]" style={{ color: "var(--muted)" }}>Prelima · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
+                </div>
+              </div>
             </div>
           </>)}
         </div>
@@ -1012,7 +1080,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "problem" && (
-          <Q idx={idx} total={total} title="What problem are we trying to solve?" hint="Optional — pick everything that applies.">
+          <Q idx={idx} total={total} title="What problem are we trying to solve?" hint="Pick everything that applies.">
             <div className="flex flex-wrap gap-2.5">
               {PROBLEM_OPTIONS.map(p => <Chip key={p} active={a.problem.includes(p)} onClick={() => toggle("problem", p)}>{p}</Chip>)}
             </div>
@@ -1024,7 +1092,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "audience" && (
-          <Q idx={idx} total={total} title="Who's the target audience?" hint="Optional — a quick sketch of who this is for. We'll use it to ask smarter questions next.">
+          <Q idx={idx} total={total} title="Who's the target audience?" hint="A quick sketch of who this is for — age, location and gender at least. We'll use it to ask smarter questions next.">
             <div className="space-y-6">
               <div>
                 <SectionLabel>Age range</SectionLabel>
@@ -1063,7 +1131,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "insights" && (
-          <Q idx={idx} total={total} title="Any insights that could help?" hint="Optional — a few quick questions based on what you've told us so far.">
+          <Q idx={idx} total={total} title="Any insights that could help?" hint="A few quick questions based on what you've told us so far.">
             {insightsLoading ? (
               <div className="flex items-center gap-2 text-sm" style={{ color: "var(--muted)" }}>
                 <Loader2 className="w-4 h-4 animate-spin" /> Thinking of a few questions…
@@ -1076,7 +1144,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                     <input type="text" value={a.insightAnswers[i] || ""} onChange={e => {
                         const next = [...a.insightAnswers]; next[i] = e.target.value; set({ insightAnswers: next });
                       }}
-                      placeholder="Optional…" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus={i === 0} />
+                      placeholder="Your answer…" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus={i === 0} />
                   </div>
                 ))}
               </div>
@@ -1115,9 +1183,16 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
         )}
 
         {s === "deadline" && (
-          <Q idx={idx} total={total} title="When do you need it by?" hint="Optional — pick a date if you have one.">
+          <Q idx={idx} total={total} title="When do you need it by?" hint="Pick the date this is due.">
             <input type="date" value={a.deadline} onChange={e => set({ deadline: e.target.value })}
               className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+          </Q>
+        )}
+
+        {s === "briefer" && (
+          <Q idx={idx} total={total} title="Last thing — who's briefing this?" hint="Your name goes on the brief, so whoever picks up the work knows who to ask.">
+            <input type="text" value={a.briefer} onChange={e => set({ briefer: e.target.value })}
+              placeholder="Your name" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
           </Q>
         )}
 
@@ -1134,6 +1209,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                 ["Audience", audienceSummary || "—", 6],
                 ["Insights", a.insightAnswers.filter(Boolean).length > 0 ? `${a.insightAnswers.filter(Boolean).length} answered` : "—", 7],
                 ["Deadline", a.deadline || "—", 10],
+                ["Briefed by", a.briefer || "—", 11],
               ].map(([k, v, go]) => (
                 <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
                   style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
@@ -1149,7 +1225,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
           </Q>
         )}
 
-        {s !== "review" && (
+        {s !== "review" && !(s === "insights" && insightsLoading) && (
           <div className="mt-8 flex items-center gap-3">
             {idx > 0 && <Btn variant="secondary" onClick={back} aria-label="Back"><ArrowLeft className="w-4 h-4" /></Btn>}
             <Btn onClick={next} disabled={!canNext()}>Continue <ArrowRight className="w-4 h-4" /></Btn>
