@@ -75,9 +75,13 @@ const ThemeStyles = () => (
       background: var(--accent); border: 4px solid var(--surface); box-shadow: var(--shadow);
     }
     [data-app="prelima"] textarea, [data-app="prelima"] input[type="text"],
-    [data-app="prelima"] input[type="email"], [data-app="prelima"] input[type="url"] {
+    [data-app="prelima"] input[type="email"], [data-app="prelima"] input[type="url"],
+    [data-app="prelima"] input[type="date"], [data-app="prelima"] input[type="number"],
+    [data-app="prelima"] select {
       background: var(--surface); color: var(--ink); border: 1px solid var(--line);
     }
+    [data-app="prelima"] select option { background: var(--surface); color: var(--ink); }
+    [data-app="prelima"][data-theme="dark"] { color-scheme: dark; }
     [data-app="prelima"] ::placeholder { color: var(--muted); opacity: .7; }
     .pr-print-only { display: none; }
     @media print {
@@ -126,6 +130,19 @@ function parseJSON(text) {
 }
 
 const downloadBrief = () => window.print();
+
+/* Heuristic "did they type something real?" guard for required free-text —
+   blocks empty, too-short, vowel-less keyboard mashes and single repeated chars. */
+function looksReal(s, min = 3) {
+  const t = (s || "").trim();
+  if (t.length < min) return false;
+  const letters = t.replace(/[^a-zA-Z]/g, "");
+  if (letters.length >= 3) {
+    if (!/[aeiou]/i.test(letters)) return false;
+    if (/^(.)\1+$/.test(letters.toLowerCase())) return false;
+  }
+  return true;
+}
 
 async function downloadTaskBriefDocx(a, result, typeLabel) {
   const bullets = (items) => (items || []).map(t => new Paragraph({ text: t, bullet: { level: 0 } }));
@@ -225,6 +242,12 @@ const SectionLabel = ({ children }) => (
   <div className="mono text-[11px] font-medium uppercase tracking-[0.14em] mb-2" style={{ color: "var(--muted)" }}>{children}</div>
 );
 
+/* Muted helper shown under any chip group that has an "Other"/"Others" option,
+   so people know exactly what to do when their choice isn't listed. */
+const OtherHint = () => (
+  <p className="mt-3 text-xs" style={{ color: "var(--muted)" }}>Can't see yours? Pick “Other” and type it in.</p>
+);
+
 /* A titled section inside the designed brief document (accent heading + body). */
 const BriefSection = ({ title, children }) => (
   <div className="mb-6">
@@ -237,28 +260,46 @@ const BriefSection = ({ title, children }) => (
 /* Client intake flow — the signature experience                       */
 /* ------------------------------------------------------------------ */
 
-const OBJECTIVES = ["Brand awareness", "Lead generation", "Sales / conversions", "Product launch", "Rebrand", "Community growth", "Recruitment"];
-const DELIVERABLE_OPTIONS = ["Logo & identity", "Website", "Social content", "Video", "Campaign", "Copywriting", "Packaging", "Paid media / Paid social", "Others"];
-const PLATFORMS = ["Instagram", "TikTok", "LinkedIn", "YouTube", "Facebook", "Website", "Email", "Offline / print"];
-const BUDGET_RANGES = [
-  ["RM0 – RM500", 500],
-  ["RM500 – RM1,000", 1000],
-  ["RM1,000 – RM2,000", 2000],
-  ["RM2,000 – RM5,000", 5000],
-  ["RM5,000 – RM10,000", 10000],
-  ["Above RM10,000", "custom"],
-];
+const OBJECTIVES = ["Brand awareness", "Lead generation", "Sales / conversions", "Product launch", "Rebrand", "Community growth", "Recruitment", "Education & Understanding", "Engagement & Participation", "Traffic & Discovery", "Retention & Loyalty", "Crisis Management"];
+const DELIVERABLE_OPTIONS = ["Logo & identity", "Website / landing page", "Social content", "Video", "Campaign", "Copywriting", "Packaging", "Paid advertising", "Content Creators / KOL", "PR", "Marketing Collaterals", "App development", "Social media management", "Photography", "Animation", "Event Management", "E-Commerce management", "Others"];
+const PLATFORMS = ["Instagram", "TikTok", "LinkedIn", "YouTube", "Facebook", "Website", "Email", "Xiaohongshu", "Threads", "X", "WhatsApp", "Telegram", "Blog", "Radio", "Cinema", "PR / Media", "OOH / DOOH", "In-store POSM", "Print", "Offline / print"];
 
-const blankAnswers = {
-  website: "", overview: "", background: "", objectives: [], audience: "",
-  deliverables: [], platforms: [], timelineMode: "weeks", timelineWeeks: 6, timelineDate: "",
-  budget: 0, budgetRange: "", budgetFlexible: true,
-  revisions: 2, deliverablesOther: "",
+// Budget brackets by currency. Same bracket structure, currency-appropriate rounding.
+const CURRENCIES = ["USD", "GBP", "SGD", "MYR", "EUR", "AUD"];
+const BUDGET_BRACKETS = {
+  USD: [500, 1000, 2000, 5000, 10000],
+  GBP: [500, 1000, 2000, 5000, 10000],
+  SGD: [500, 1000, 2000, 5000, 10000],
+  MYR: [500, 1000, 2000, 5000, 10000],
+  EUR: [500, 1000, 2000, 5000, 10000],
+  AUD: [500, 1000, 2000, 5000, 10000],
+};
+const CURRENCY_SYMBOL = { USD: "$", GBP: "£", SGD: "S$", MYR: "RM", EUR: "€", AUD: "A$" };
+const budgetRangeOptions = (cur) => {
+  const sym = CURRENCY_SYMBOL[cur] || cur + " ";
+  const b = BUDGET_BRACKETS[cur] || BUDGET_BRACKETS.USD;
+  const fmt = (n) => sym + n.toLocaleString();
+  const opts = [[`${fmt(0)} – ${fmt(b[0])}`, b[0]]];
+  for (let i = 1; i < b.length; i++) opts.push([`${fmt(b[i - 1])} – ${fmt(b[i])}`, b[i]]);
+  opts.push([`Above ${fmt(b[b.length - 1])}`, "custom"]);
+  return opts;
 };
 
-const TASK_TYPES = ["Design", "Video", "Copywriting", "Social content", "Illustration", "Web Dev", "Ads management", "Other"];
-const DELIVERABLE_FORMATS = ["Carousel (4:5)", "Carousel (1:1)", "Reel / Short video (9:16)", "Video (16:9)", "Story (9:16)", "Static post (1:1)", "Static post (4:5)", "Poster / Print (A4)", "Not sure yet", "Other"];
-const PROBLEM_OPTIONS = ["Brand awareness", "Sales / conversions", "Product launch", "Customer retention", "Rebrand / repositioning", "Education / explaining the product", "Community engagement", "Other"];
+const blankAnswers = {
+  website: "", overview: "", background: "", products: "", objectives: [],
+  audienceAgeRange: [], audienceLocation: [], audienceLocationOther: "",
+  audienceGender: [], audienceHobbies: [], audienceHobbiesOther: "",
+  deliverables: [], platforms: [], timelineMode: "weeks", timelineWeeks: 6, timelineDate: "",
+  currency: "MYR", budget: 0, budgetRange: "", budgetFlexible: true,
+  revisions: 2, deliverablesOther: "",
+  workingFiles: "", briefingDeck: "", brandGuidelines: "",
+  briefer: "",
+  customFields: [],
+};
+
+const TASK_TYPES = ["Design", "Video", "Videography", "Photography", "Animation", "Copywriting", "Social content", "Illustration", "Web Dev", "Ads management", "SEO", "GEO", "Creative Concept", "Campaign Management", "Creators / KOLs", "PR & Media", "Other"];
+const DELIVERABLE_FORMATS = ["Carousel (4:5)", "Carousel (1:1)", "Reel / Short video (9:16)", "Video (16:9)", "Story (9:16)", "Static post (1:1)", "Static post (4:5)", "Poster / Print (A4)", "Other"];
+const PROBLEM_OPTIONS = ["Brand awareness", "Sales / conversions", "Product launch", "Customer retention", "Rebrand / repositioning", "Education / explaining the product", "Community engagement", "Engagement / participation", "Crisis management", "Other"];
 const AGE_BRACKETS = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
 const LOCATIONS = ["Malaysia", "Singapore", "Southeast Asia", "Asia Pacific", "Europe", "North America", "Global / Worldwide", "Other"];
 const GENDERS = ["Male", "Female"];
@@ -424,17 +465,26 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const total = steps.length;
   const pct = step < 0 ? 0 : Math.round(((step) / total) * 100);
 
+  const locationLabel = a.audienceLocation.map(l => l === "Other" ? (a.audienceLocationOther || "Other") : l).join(", ");
+  const hobbyLabel = a.audienceHobbies.map(h => h === "Other" ? (a.audienceHobbiesOther || "Other") : h).join(", ");
+  const audienceSummary = [a.audienceAgeRange.join(", "), a.audienceGender.join("/"), locationLabel, hobbyLabel].filter(Boolean).join(" · ");
+  const deliverablesLabel = a.deliverables.map(d => d === "Others" ? (a.deliverablesOther || "Others") : d).join(", ");
+  const curSym = CURRENCY_SYMBOL[a.currency] || (a.currency + " ");
+  const fmtBudget = (n) => curSym + Number(n || 0).toLocaleString();
+  const budgetOpts = budgetRangeOptions(a.currency);
+  const budgetIsCustom = (() => { const o = budgetOpts.find(r => r[0] === a.budgetRange); return o && o[1] === "custom"; })();
+
   async function analyseWebsite() {
     if (!a.website) return;
     setAiBusy(true); setAiNote("");
     try {
       const text = await callClaude([{
         role: "user",
-        content: `Research this company's website: ${a.website}\n\nWrite a business background ABOUT THE COMPANY — what they do, what they sell or offer, who their customers are, and how they position themselves. Write it in first person plural, as if the business is describing itself (e.g. "We're a specialty coffee roaster with three cafés\u2026").\n\nStrict rules: never mention or describe the website itself. No phrases like "the website", "the site", "their online presence", or comments on design/polish. Only talk about the business. 2-4 sentences, plain and factual.\n\nRespond ONLY with a JSON object, no preamble, no markdown fences:\n{"background": "the business background text"}`
+        content: `Research this company's website: ${a.website}\n\nWrite a business background ABOUT THE COMPANY — what they do, what they sell or offer, who their customers are, and how they position themselves. Write it in first person plural, as if the business is describing itself (e.g. "We're a specialty coffee roaster with three cafés\u2026").\n\nStrict rules: never mention or describe the website itself. No phrases like "the website", "the site", "their online presence", or comments on design/polish. Only talk about the business. Keep the background to 2-3 sentences.\n\nSeparately, list their products/services as short bullet points, one per line, each starting with "- ". If there are many, group and summarise into a handful of clear bullets rather than listing every item. Do NOT cram products into the background paragraph.\n\nRespond ONLY with a JSON object, no preamble, no markdown fences:\n{"background": "the 2-3 sentence background", "products": "- product or service one\\n- product or service two"}`
       }], { useSearch: true });
       const j = parseJSON(text);
       if (j && j.background) {
-        set({ background: j.background });
+        set({ background: j.background, products: j.products || "" });
         setShowBg(true);
         setAiNote("Here's your business background — edit anything that's off.");
       } else { setShowBg(true); setAiNote("Couldn't read that site — write a couple of lines about the business instead."); }
@@ -458,7 +508,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
       throw new Error("bad json");
     } catch {
       const fallback = {
-        professionalBrief: `${payload.overview}\n\n${payload.background}\n\nObjectives: ${payload.objectives.join(", ") || "—"}. Audience: ${payload.audience || "—"}.\nDeliverables: ${payload.deliverables.join(", ") || "—"} across ${payload.platforms.join(", ") || "—"}.\nTimeline: ${payload.timelineMode === "date" ? (payload.timelineDate || "—") : `${payload.timelineWeeks} weeks`}. Budget: ${money(payload.budget)}${payload.budgetFlexible ? " (flexible)" : " (fixed)"} with ${payload.revisions} revision rounds.`,
+        professionalBrief: `${payload.overview}\n\n${payload.background}${payload.products ? `\n\nProducts / services:\n${payload.products}` : ""}\n\nObjectives: ${payload.objectives.join(", ") || "—"}. Audience: ${audienceSummary || "—"}.\nDeliverables: ${deliverablesLabel || "—"} across ${payload.platforms.join(", ") || "—"}.\nTimeline: ${payload.timelineMode === "date" ? (payload.timelineDate || "—") : `${payload.timelineWeeks} weeks`}. Budget: ${fmtBudget(payload.budget)}${payload.budgetFlexible ? " (flexible)" : " (fixed)"} with ${payload.revisions} revision rounds.`,
         missingInfo: [], followUpQuestions: [], unclearRequirements: [], scopeGaps: [],
         _fallback: true,
       };
@@ -468,13 +518,14 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   const canNext = () => {
     const s = steps[idx]?.id;
-    if (s === "website") return a.background.trim().length > 0;
-    if (s === "overview") return a.overview.trim().length > 0;
+    if (s === "website") return looksReal(a.background, 10);
+    if (s === "overview") return looksReal(a.overview, 10);
     if (s === "objectives") return a.objectives.length > 0;
-    if (s === "audience") return a.audience.trim().length > 0;
-    if (s === "deliverables") return a.deliverables.length > 0;
-    if (s === "budget") return a.budgetRange && (a.budgetRange !== "Above RM10,000" || a.budget > 0);
+    if (s === "audience") return a.audienceAgeRange.length > 0 && a.audienceLocation.length > 0 && a.audienceGender.length > 0;
+    if (s === "deliverables") return a.deliverables.length > 0 && (!a.deliverables.includes("Others") || looksReal(a.deliverablesOther));
+    if (s === "budget") return !!a.budgetRange && (!budgetIsCustom || a.budget > 0);
     if (s === "timeline") return a.timelineMode !== "date" || a.timelineDate;
+    if (s === "briefer") return a.briefer.trim().length >= 2;
     return true;
   };
 
@@ -495,8 +546,8 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
             <p style={{ color: "var(--muted)" }}>AI is rewriting your responses into a professional creative brief and checking for anything missing. This takes a few seconds.</p>
           </>) : (<>
             <CheckCircle2 className="w-10 h-10 mb-6" style={{ color: "var(--good)" }} />
-            <h2 className="display text-3xl md:text-4xl font-semibold mb-3">All done — thank you.</h2>
-            <p className="mb-8" style={{ color: "var(--muted)" }}>Your brief has been sent to {freelancer}. They'll review it and follow up shortly.</p>
+            <h2 className="display text-3xl md:text-4xl font-semibold mb-3">Your brief is ready.</h2>
+            <p className="mb-8" style={{ color: "var(--muted)" }}>Download a copy to share with whoever you're briefing.</p>
             <div className="flex flex-wrap items-center gap-3">
               <Btn onClick={downloadBrief}><Download className="w-4 h-4" /> Download my brief</Btn>
               {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
@@ -507,10 +558,11 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
               <p style={{ whiteSpace: "pre-wrap" }}>{result && result.professionalBrief ? result.professionalBrief : ""}</p>
               <h2 className="display text-lg font-semibold mt-6 mb-2">Key details</h2>
               <p>Objectives: {a.objectives.join(", ") || "—"}</p>
-              <p>Deliverables: {a.deliverables.map(d => d === "Others" ? (a.deliverablesOther || "Others") : d).join(", ") || "—"}</p>
+              <p>Audience: {audienceSummary || "—"}</p>
+              <p>Deliverables: {deliverablesLabel || "—"}</p>
               <p>Platforms: {a.platforms.join(", ") || "—"}</p>
               <p>Timeline: {a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</p>
-              <p>Budget: {money(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</p>
+              <p>Budget: {fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</p>
               <p>Revisions: {a.revisions}</p>
             </div>
           </>)}
@@ -523,7 +575,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     return (
       <IntakeShell pct={0} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
         <div className="rise max-w-xl">
-          <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>{freelancer.toUpperCase()} → {projectName.toUpperCase()}</div>
+          <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>NEW PROJECT BRIEF</div>
           <h1 className="display text-3xl md:text-5xl font-semibold leading-tight mb-4">Let's shape this project properly.</h1>
           <p className="text-base md:text-lg mb-8" style={{ color: "var(--muted)" }}>
             A few guided questions — one at a time, about five minutes. Your answers save automatically, so you can leave and come back.
@@ -567,6 +619,11 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
                 <VoiceTA value={a.background} onChange={v => set({ background: v })}
                   placeholder="What you do, who you serve, and anything that makes you different…"
                   rows={4} cleanHint="business background" />
+                <div className="mt-5">
+                  <SectionLabel>Products & services</SectionLabel>
+                  <TA value={a.products} onChange={v => set({ products: v })}
+                    placeholder={"- Your first product or service\n- Another one"} rows={4} autoFocus={false} />
+                </div>
               </div>
             )}
           </Q>
@@ -574,7 +631,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
         {s === "overview" && (
           <Q idx={idx} total={total} title="What's this project about?"
-            hint={'In your own words — one or two sentences is fine. Type or speak. Example: "We’re opening a second yoga studio and need a social campaign to fill trial classes."'}>
+            hint={'In your own words — one or two sentences is fine. Type or speak. Example: "We’re launching a new cold-brew coffee range in July and need a 6-week Instagram + TikTok campaign to drive online pre-orders and hit 500 sales in the first month."'}>
             <VoiceTA value={a.overview} onChange={v => set({ overview: v })} placeholder="We need help with…" cleanHint="project overview" />
           </Q>
         )}
@@ -588,8 +645,41 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
         )}
 
         {s === "audience" && (
-          <Q idx={idx} total={total} title="Who are we trying to reach?" hint={'Example: "Women 24–38 within 5km of Bangsar who currently work out at gyms."'}>
-            <VoiceTA value={a.audience} onChange={v => set({ audience: v })} placeholder="Our ideal customer is…" rows={4} cleanHint="target audience description" />
+          <Q idx={idx} total={total} title="Who are we trying to reach?" hint="A quick sketch of who this is for — age, location and gender at least.">
+            <div className="space-y-6">
+              <div>
+                <SectionLabel>Age range</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {AGE_BRACKETS.map(r => <Chip key={r} active={a.audienceAgeRange.includes(r)} onClick={() => toggle("audienceAgeRange", r)}>{r}</Chip>)}
+                </div>
+              </div>
+              <div>
+                <SectionLabel>Location</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {LOCATIONS.map(l => <Chip key={l} active={a.audienceLocation.includes(l)} onClick={() => toggle("audienceLocation", l)}>{l}</Chip>)}
+                </div>
+                {a.audienceLocation.includes("Other") ? (
+                  <input type="text" value={a.audienceLocationOther} onChange={e => set({ audienceLocationOther: e.target.value })}
+                    placeholder="Type the location here…" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
+                ) : <OtherHint />}
+              </div>
+              <div>
+                <SectionLabel>Gender</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {GENDERS.map(g => <Chip key={g} active={a.audienceGender.includes(g)} onClick={() => toggle("audienceGender", g)}>{g}</Chip>)}
+                </div>
+              </div>
+              <div>
+                <SectionLabel>Hobbies & interests</SectionLabel>
+                <div className="flex flex-wrap gap-2.5">
+                  {HOBBIES.map(h => <Chip key={h} active={a.audienceHobbies.includes(h)} onClick={() => toggle("audienceHobbies", h)}>{h}</Chip>)}
+                </div>
+                {a.audienceHobbies.includes("Other") ? (
+                  <input type="text" value={a.audienceHobbiesOther} onChange={e => set({ audienceHobbiesOther: e.target.value })}
+                    placeholder="Type interests here…" className="mt-3 w-full rounded-xl px-4 py-3 text-sm fade" />
+                ) : <OtherHint />}
+              </div>
+            </div>
           </Q>
         )}
 
@@ -598,11 +688,11 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
             <div className="flex flex-wrap gap-2.5">
               {DELIVERABLE_OPTIONS.map(d => <Chip key={d} active={a.deliverables.includes(d)} onClick={() => toggle("deliverables", d)}>{d}</Chip>)}
             </div>
-            {a.deliverables.includes("Others") && (
+            {a.deliverables.includes("Others") ? (
               <input type="text" value={a.deliverablesOther} onChange={e => set({ deliverablesOther: e.target.value })}
-                placeholder="Tell us what else you need…"
+                placeholder="Type what else you need here…"
                 className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
-            )}
+            ) : <OtherHint />}
           </Q>
         )}
 
@@ -637,18 +727,23 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
         {s === "budget" && (
           <Q idx={idx} total={total} title="What's the budget for this project?" hint="A one-time budget for this project, not a monthly figure — a range helps scope the work honestly, nothing is locked in.">
+            <SectionLabel>Currency</SectionLabel>
+            <div className="flex flex-wrap gap-2.5 mb-6">
+              {CURRENCIES.map(c => <Chip key={c} active={a.currency === c} onClick={() => set({ currency: c, budgetRange: "", budget: 0 })}>{c}</Chip>)}
+            </div>
+            <SectionLabel>Range</SectionLabel>
             <select value={a.budgetRange} onChange={e => {
-                const range = BUDGET_RANGES.find(r => r[0] === e.target.value);
+                const range = budgetOpts.find(r => r[0] === e.target.value);
                 set({ budgetRange: e.target.value, budget: range && range[1] !== "custom" ? range[1] : a.budget });
               }}
-              className="w-full rounded-2xl px-5 py-4 text-base" style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--ink)", boxShadow: "var(--shadow)" }} autoFocus>
+              className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }}>
               <option value="" disabled>Select a budget range…</option>
-              {BUDGET_RANGES.map(([label]) => <option key={label} value={label}>{label}</option>)}
+              {budgetOpts.map(([label]) => <option key={label} value={label}>{label}</option>)}
             </select>
-            {a.budgetRange === "Above RM10,000" && (
+            {budgetIsCustom && (
               <div className="mt-3 flex items-center rounded-2xl px-5 fade" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
-                <span className="mono text-sm mr-2" style={{ color: "var(--muted)" }}>RM</span>
-                <input type="number" min="10000" step="500" value={a.budget || ""} onChange={e => set({ budget: Number(e.target.value) })}
+                <span className="mono text-sm mr-2" style={{ color: "var(--muted)" }}>{curSym}</span>
+                <input type="number" min="0" step="500" value={a.budget || ""} onChange={e => set({ budget: Number(e.target.value) })}
                   placeholder="Enter your exact budget" className="flex-1 py-4 text-base bg-transparent border-0" style={{ boxShadow: "none" }} autoFocus />
               </div>
             )}
@@ -680,9 +775,10 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
                 ["Background", a.background, 0],
                 ["Overview", a.overview, 1],
                 ["Objectives", a.objectives.join(", "), 2],
-                ["Deliverables", a.deliverables.map(d => d === "Others" ? (a.deliverablesOther || "Others") : d).join(", "), 4],
+                ["Audience", audienceSummary, 3],
+                ["Deliverables", deliverablesLabel, 4],
                 ["Timeline", a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`, 6],
-                ["Budget", `${money(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`, 7],
+                ["Budget", `${fmtBudget(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`, 7],
               ].map(([k, v, go]) => (
                 <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
                   style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
@@ -719,7 +815,6 @@ function IntakeShell({ children, pct, saved, onExit, projectName, freelancer }) 
       <header className="flex items-center justify-between px-5 md:px-10 py-4">
         <div className="flex items-center gap-2">
           <Wordmark small />
-          <span className="mono text-[11px] hidden md:inline" style={{ color: "var(--muted)" }}>· {freelancer}</span>
         </div>
         <div className="flex items-center gap-4">
           <span className="mono text-[11px] flex items-center gap-1.5" style={{ color: saved ? "var(--good)" : "var(--muted)" }}>
@@ -860,16 +955,16 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
 
   const canNext = () => {
     const s = steps[idx]?.id;
-    if (s === "brand") return a.brandName.trim().length > 0;
-    if (s === "title") return a.title.trim().length > 0;
-    if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || a.typeOther.trim().length > 0);
-    if (s === "format") return a.deliverables.some(d => d.format && (d.format !== "Other" || (d.other || "").trim().length > 0));
-    if (s === "description") return a.description.trim().length > 0;
-    if (s === "problem") return a.problem.length > 0 && (!a.problem.includes("Other") || a.problemOther.trim().length > 0);
+    if (s === "brand") return looksReal(a.brandName);
+    if (s === "title") return looksReal(a.title);
+    if (s === "type") return a.type.length > 0 && (!a.type.includes("Other") || looksReal(a.typeOther));
+    if (s === "format") return a.deliverables.some(d => d.format && (d.format !== "Other" || looksReal(d.other)));
+    if (s === "description") return looksReal(a.description, 10);
+    if (s === "problem") return a.problem.length > 0 && (!a.problem.includes("Other") || looksReal(a.problemOther));
     if (s === "audience") return a.audienceAgeRange.length > 0 && a.audienceLocation.length > 0 && a.audienceGender.length > 0;
     if (s === "insights") return a.insightQuestions.length > 0 && a.insightAnswers.every(x => (x || "").trim().length > 0);
     if (s === "deadline") return a.deadline.trim().length > 0;
-    if (s === "briefer") return a.briefer.trim().length > 0;
+    if (s === "briefer") return a.briefer.trim().length >= 2;
     // references & links stay optional — forcing URLs that may not exist creates junk data.
     return true;
   };
@@ -1031,11 +1126,11 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             <div className="flex flex-wrap gap-2.5">
               {TASK_TYPES.map(t => <Chip key={t} active={a.type.includes(t)} onClick={() => toggle("type", t)}>{t}</Chip>)}
             </div>
-            {a.type.includes("Other") && (
+            {a.type.includes("Other") ? (
               <input type="text" value={a.typeOther} onChange={e => set({ typeOther: e.target.value })}
-                placeholder="Tell us what kind of work…"
+                placeholder="Type the kind of work here…"
                 className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
-            )}
+            ) : <OtherHint />}
           </Q>
         )}
 
@@ -1062,11 +1157,12 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
                   </div>
                   {d.format === "Other" && (
                     <input type="text" value={d.other || ""} onChange={e => setDeliv(i, { other: e.target.value })}
-                      placeholder="Describe the format…" className="mt-2 w-full rounded-xl px-4 py-3 text-sm fade" autoFocus />
+                      placeholder="Type your format here (e.g. Billboard, Menu, Email header)…" className="mt-2 w-full rounded-xl px-4 py-3 text-sm fade" autoFocus />
                   )}
                 </div>
               ))}
             </div>
+            <p className="mt-3 text-xs" style={{ color: "var(--muted)" }}>Format not in the list? Choose “Other” and type your own.</p>
             <button onClick={addDeliv} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
               <Plus className="w-4 h-4" /> Add another
             </button>
@@ -1084,10 +1180,10 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit }) {
             <div className="flex flex-wrap gap-2.5">
               {PROBLEM_OPTIONS.map(p => <Chip key={p} active={a.problem.includes(p)} onClick={() => toggle("problem", p)}>{p}</Chip>)}
             </div>
-            {a.problem.includes("Other") && (
+            {a.problem.includes("Other") ? (
               <input type="text" value={a.problemOther} onChange={e => set({ problemOther: e.target.value })}
-                placeholder="Tell us more…" className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
-            )}
+                placeholder="Type the problem here…" className="mt-4 w-full rounded-2xl px-5 py-4 text-base fade" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+            ) : <OtherHint />}
           </Q>
         )}
 
@@ -1291,7 +1387,7 @@ function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
       <footer className="border-t px-5 md:px-12 py-8" style={{ borderColor: "var(--line)" }}>
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <Wordmark small />
-          <span className="mono text-[11px]" style={{ color: "var(--muted)" }}>Free while in beta</span>
+          <span className="mono text-[11px]" style={{ color: "var(--muted)" }}>Free for life</span>
         </div>
       </footer>
     </div>
@@ -2279,7 +2375,7 @@ function AuthScreen({ onDone, onBack, dark, setDark }) {
         <Card className="w-full max-w-sm p-6 md:p-8 fade">
           <h1 className="display text-2xl font-semibold mb-1">{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
           <p className="text-sm mb-6" style={{ color: "var(--muted)" }}>
-            {mode === "signup" ? "Free while in beta — no card required." : "Sign in to your workspace."}
+            {mode === "signup" ? "Free for life — no card required." : "Sign in to your workspace."}
           </p>
           <div className="space-y-3">
             <div className="flex items-center gap-2 rounded-xl px-4" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
