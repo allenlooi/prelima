@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, fetchTaskBriefs, syncTaskBriefs, ensureProfile, saveWorkspaceName } from "./db.js";
+import { pageview, trackEvent } from "./analytics.js";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 
 /* ------------------------------------------------------------------ */
@@ -625,6 +626,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", via
   function goToPreview() {
     if (!doneRef.current) {
       doneRef.current = true;
+      trackEvent("brief_completed", { brief_type: "project" });
       onDone && onDone(displayRes, { ...a, projectName });
     }
     setPreview(true);
@@ -1351,6 +1353,7 @@ function TaskBriefFlow({ freelancer = "My Studio", viaLink, onDone, onExit, dark
   function goToPreview() {
     if (!doneRef.current) {
       doneRef.current = true;
+      trackEvent("brief_completed", { brief_type: "creative" });
       onDone && onDone({
         id: "t" + Date.now(),
         title: a.title || "Untitled brief",
@@ -3063,6 +3066,10 @@ export default function App() {
 
   const goTo = (path, v) => { try { window.history.pushState({}, "", path); } catch {} setViaLink(false); setView(v); };
   const goHome = () => { try { window.history.pushState({}, "", "/"); } catch {} setView("landing"); };
+
+  // GA4 page_view per view change — the app never does a full navigation, so we
+  // fire this manually rather than relying on gtag's automatic pageview.
+  useEffect(() => { pageview(window.location.pathname); }, [view]);
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
