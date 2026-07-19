@@ -84,7 +84,7 @@ const ThemeStyles = () => (
     [data-app="prelima"][data-theme="dark"] { color-scheme: dark; }
     [data-app="prelima"] ::placeholder { color: var(--muted); opacity: .7; }
     .pr-print-only { display: none; }
-    @page { size: A4; margin: 14mm; }
+    @page { size: A4; margin: 10mm; }
     @media print {
       /* Always export in light mode, even when the app is in dark mode. */
       [data-app="prelima"], [data-app="prelima"][data-theme="dark"] {
@@ -92,15 +92,20 @@ const ThemeStyles = () => (
         --muted: #5A5A64; --line: #E2E2DC; --accent: #4353FF; --accent-ink: #FFFFFF;
         --accent-soft: #EEF0FF; --good: #0E9F6E; --warn: #C27803; color-scheme: light;
       }
-      html, body { background: #FFFFFF !important; }
+      html, body { background: #FFFFFF !important; margin: 0 !important; padding: 0 !important; }
+      /* Animations/transforms turn an ancestor into a containing block, which was
+         pinning the print area to the vertically-centred wizard and leaving a big
+         gap at the top. Neutralise them so the brief anchors to the page top. */
+      [data-app="prelima"] * { animation: none !important; transform: none !important; }
       body * { visibility: hidden !important; }
       .pr-print-area, .pr-print-area * { visibility: visible !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      /* Fill the printable page rather than a random centred size. */
+      /* Fill the printable page from the very top rather than a centred block. */
       .pr-print-area {
         position: absolute !important; left: 0 !important; top: 0 !important; right: 0 !important;
         width: 100% !important; max-width: none !important; margin: 0 !important;
         border: none !important; border-radius: 0 !important; box-shadow: none !important;
       }
+      .pr-print-area > div { padding-left: 4mm !important; padding-right: 4mm !important; }
       .pr-print-only { display: block !important; }
     }
   `}</style>
