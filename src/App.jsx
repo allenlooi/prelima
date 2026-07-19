@@ -182,7 +182,16 @@ async function downloadTaskBriefDocx(a, result, typeLabel) {
     sections: [{
       children: [
         new Paragraph({ text: a.title || "Task brief", heading: HeadingLevel.TITLE }),
+        new Paragraph({ text: "The ask", heading: HeadingLevel.HEADING_2, spacing: { after: 100 } }),
         new Paragraph({ text: (result && result.creativeBrief) || "", spacing: { after: 200 } }),
+        ...(a.aboutUs && a.aboutUs.trim() ? [
+          new Paragraph({ text: "About us", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
+          new Paragraph({ text: a.aboutUs, spacing: { after: 100 } }),
+        ] : []),
+        ...(a.products && a.products.trim() ? [
+          new Paragraph({ text: "Products & services", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
+          ...a.products.split("\n").filter(Boolean).map(t => new Paragraph({ text: t.replace(/^[-•]\s*/, ""), bullet: { level: 0 } })),
+        ] : []),
         ...(result && result.deliverables && result.deliverables.length ? [
           new Paragraph({ text: "Deliverables", heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 } }),
           ...bullets(result.deliverables),
@@ -329,7 +338,7 @@ const GENDERS = ["Male", "Female"];
 const HOBBIES = ["Fitness", "Travel", "Fashion & beauty", "Food & dining", "Technology", "Gaming", "Music", "Reading", "Outdoors", "Wellness", "Other"];
 
 const blankTaskAnswers = {
-  brandName: "", brandWebsite: "",
+  brandName: "", brandWebsite: "", aboutUs: "", products: "",
   title: "", type: [], typeOther: "",
   deliverables: [{ qty: 1, format: "", other: "" }],
   description: "",
@@ -619,12 +628,18 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
       </div>
 
       <div style={{ padding: "28px 32px" }}>
-        <BriefSection title="The brief">
+        <BriefSection title="The ask">
           {canEdit
             ? <textarea value={(res && res.professionalBrief) || ""} onChange={e => setResultField({ professionalBrief: e.target.value })} rows={9}
                 className="w-full rounded-xl p-3 text-sm leading-relaxed resize-y" />
             : <p className="text-sm leading-relaxed whitespace-pre-line">{res && res.professionalBrief ? res.professionalBrief : ""}</p>}
         </BriefSection>
+
+        {a.background && a.background.trim() && (
+          <BriefSection title="About us">
+            <p className="text-sm leading-relaxed whitespace-pre-line">{a.background}</p>
+          </BriefSection>
+        )}
 
         {a.products && a.products.trim() && (
           <BriefSection title="Products & services">
@@ -633,13 +648,13 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
         )}
 
         <BriefSection title="Key details">
-          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Objectives: </span>{a.objectives.join(", ") || "—"}</div>
-          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary || "—"}</div>
-          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Deliverables: </span>{deliverablesLabel || "—"}</div>
-          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Platforms: </span>{a.platforms.join(", ") || "—"}</div>
-          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Timeline: </span>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</div>
-          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Budget: </span>{fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</div>
-          <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Revisions: </span>{a.revisions}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Objectives: </span>{a.objectives.join(", ") || "—"}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary || "—"}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Deliverables: </span>{deliverablesLabel || "—"}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Platforms: </span>{a.platforms.join(", ") || "—"}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Timeline: </span>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Budget: </span>{fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</div>
+          <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Revisions: </span>{a.revisions}</div>
         </BriefSection>
 
         {a.customFields.filter(c => c.label || c.value).length > 0 && (
@@ -1095,7 +1110,24 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
   const [editing, setEditing] = useState(false);
   const [preview, setPreview] = useState(false);
   const [openRow, setOpenRow] = useState(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState("");
   const doneRef = useRef(false);
+
+  async function analyseBrand() {
+    if (!a.brandWebsite) return;
+    setAiBusy(true); setAiNote("");
+    try {
+      const text = await callClaude([{
+        role: "user",
+        content: `Research this company's website: ${a.brandWebsite}\n\nWrite a short "about us" describing the company in first person plural (e.g. "We're a specialty skincare brand…"), 2-3 sentences. Never mention the website itself.\n\nSeparately list their products/services as short bullets, one per line starting with "- ". If there are many, summarise into a handful.\n\nRespond ONLY with JSON: {"aboutUs": "...", "products": "- one\\n- two"}`
+      }], { useSearch: true });
+      const j = parseJSON(text);
+      if (j && (j.aboutUs || j.products)) { set({ aboutUs: j.aboutUs || "", products: j.products || "" }); setAiNote("Here's what we found — edit anything that's off."); }
+      else setAiNote("Couldn't read that site — add a couple of lines yourself.");
+    } catch { setAiNote("Couldn't reach the analysis service — add a couple of lines yourself."); }
+    setAiBusy(false);
+  }
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   const setResultField = (patch) => setResult(r => ({ ...(r || {}), ...patch }));
@@ -1108,6 +1140,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
 
   const steps = useMemo(() => ([
     { id: "brand", label: "Brand or website" },
+    { id: "context", label: "About the brand" },
     { id: "title", label: "Project name" },
     { id: "type", label: "Type of work" },
     { id: "format", label: "Deliverables" },
@@ -1147,14 +1180,14 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
       try {
         const text = await callClaude([{
           role: "user",
-          content: `You're helping someone write a creative brief. Based on what they've shared so far, ask 3 short, specific quick-fire questions that surface useful context they know but haven't put into words yet. Cover angles like: the audience's relationship with the problem, what's been tried before (worked or didn't), and why this audience would choose this brand over alternatives. Make each question concrete to THIS brand and audience, under 14 words.\n\nBrand: ${a.brandName || "—"}${a.brandWebsite ? ` (${a.brandWebsite})` : ""}\nTitle: ${a.title}\nType: ${typeLabel}\nDescription: ${a.description}\nProblem: ${problemLabel || "—"}\nAudience: ${audienceSummary || "—"}\n\nRespond ONLY with JSON, no preamble: {"questions": ["...", "...", "..."]}`
+          content: `You're helping someone write a creative brief. Based on what they've shared so far, ask 3 short, specific quick-fire questions that surface useful context they know but haven't put into words yet. Cover angles like: the audience's relationship with the problem, what they currently use or do instead, what a great outcome looks like, and why this audience would choose this brand over alternatives. Do NOT ask about past campaigns or what has failed/flopped before. Make each question concrete to THIS brand and audience, under 14 words.\n\nBrand: ${a.brandName || "—"}${a.brandWebsite ? ` (${a.brandWebsite})` : ""}\nTitle: ${a.title}\nType: ${typeLabel}\nDescription: ${a.description}\nProblem: ${problemLabel || "—"}\nAudience: ${audienceSummary || "—"}\n\nRespond ONLY with JSON, no preamble: {"questions": ["...", "...", "..."]}`
         }]);
         const j = parseJSON(text);
         if (j && Array.isArray(j.questions) && j.questions.length) {
           set({ insightQuestions: j.questions, insightAnswers: j.questions.map(() => "") });
         } else throw new Error("bad json");
       } catch {
-        const fallback = ["What's the audience's relationship with this problem?", "What's been tried before — and did it work?", "Why would they pick you over alternatives?"];
+        const fallback = ["What's the audience's relationship with this problem?", "What do they currently use or do instead?", "Why would they pick you over alternatives?"];
         set({ insightQuestions: fallback, insightAnswers: fallback.map(() => "") });
       }
       setInsightsLoading(false);
@@ -1171,7 +1204,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
       onDone && onDone({
         id: "t" + Date.now(),
         title: a.title || "Untitled brief",
-        brandName: a.brandName, brandWebsite: a.brandWebsite,
+        brandName: a.brandName, brandWebsite: a.brandWebsite, aboutUs: a.aboutUs, products: a.products,
         type: a.type, typeOther: a.typeOther, description: a.description,
         deliverables: a.deliverables,
         problem: a.problem, problemOther: a.problemOther,
@@ -1238,12 +1271,24 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
       </div>
 
       <div style={{ padding: "28px 32px" }}>
-        <BriefSection title="The brief">
+        <BriefSection title="The ask">
           {canEdit
             ? <textarea value={(res && res.creativeBrief) || ""} onChange={e => setResultField({ creativeBrief: e.target.value })} rows={8}
                 className="w-full rounded-xl p-3 text-sm leading-relaxed resize-y" />
             : <p className="text-sm leading-relaxed whitespace-pre-line">{res && res.creativeBrief ? res.creativeBrief : ""}</p>}
         </BriefSection>
+
+        {a.aboutUs && a.aboutUs.trim() && (
+          <BriefSection title="About us">
+            <p className="text-sm leading-relaxed whitespace-pre-line">{a.aboutUs}</p>
+          </BriefSection>
+        )}
+
+        {a.products && a.products.trim() && (
+          <BriefSection title="Products & services">
+            <div className="text-sm leading-relaxed whitespace-pre-line">{a.products}</div>
+          </BriefSection>
+        )}
 
         {deliverablesLabel && (
           <BriefSection title="Deliverables">
@@ -1278,10 +1323,10 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
 
         {(problemLabel || audienceSummary || a.insightAnswers.some(Boolean)) && (
           <BriefSection title="Context">
-            {problemLabel && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
-            {audienceSummary && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
+            {problemLabel && <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Problem: </span>{problemLabel}</div>}
+            {audienceSummary && <div className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary}</div>}
             {a.insightQuestions.map((q, i) => a.insightAnswers[i] && (
-              <div key={i} className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>{q} </span>{a.insightAnswers[i]}</div>
+              <div key={i} className="text-sm mb-2.5"><span style={{ color: "var(--muted)" }}>{q} </span>{a.insightAnswers[i]}</div>
             ))}
           </BriefSection>
         )}
@@ -1361,6 +1406,12 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
       <input type="text" value={a.brandName} onChange={e => set({ brandName: e.target.value })} placeholder="Brand / company name" className="w-full rounded-xl px-4 py-3 text-sm mb-2" autoFocus />
       <input type="url" value={a.brandWebsite} onChange={e => set({ brandWebsite: e.target.value })} placeholder="Website (optional)" className="w-full rounded-xl px-4 py-3 text-sm" />
     </>);
+    if (id === "context") return (<>
+      <SectionLabel>About us</SectionLabel>
+      <TA value={a.aboutUs} onChange={v => set({ aboutUs: v })} placeholder="What the brand does…" rows={3} autoFocus={false} />
+      <div className="mt-3"><SectionLabel>Products & services</SectionLabel>
+        <TA value={a.products} onChange={v => set({ products: v })} placeholder={"- One\n- Two"} rows={3} autoFocus={false} /></div>
+    </>);
     if (id === "title") return <input type="text" value={a.title} onChange={e => set({ title: e.target.value })} placeholder="Project name" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />;
     if (id === "type") return (<>
       <div className="flex flex-wrap gap-2">{TASK_TYPES.map(t => <Chip key={t} active={a.type.includes(t)} onClick={() => toggle("type", t)}>{t}</Chip>)}</div>
@@ -1426,6 +1477,24 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
               <SectionLabel>Website</SectionLabel>
               <input type="url" value={a.brandWebsite} onChange={e => set({ brandWebsite: e.target.value })}
                 placeholder="https://…  (optional if you gave a brand name)" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} />
+            </div>
+          </Q>
+        )}
+
+        {s === "context" && (
+          <Q idx={idx} total={total} title="Tell us about the brand." hint="Optional — gives the creative real context. Paste a website above and let AI fill it, or write it yourself.">
+            {a.brandWebsite && (
+              <Btn variant="secondary" onClick={analyseBrand} disabled={aiBusy} className="mb-4">
+                {aiBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {aiBusy ? "Reading your site…" : "Fill from website with AI"}
+              </Btn>
+            )}
+            {aiNote && <p className="text-sm mb-3 flex items-start gap-2" style={{ color: "var(--accent)" }}><Sparkles className="w-4 h-4 shrink-0 mt-0.5" /> {aiNote}</p>}
+            <SectionLabel>About us</SectionLabel>
+            <TA value={a.aboutUs} onChange={v => set({ aboutUs: v })} placeholder="What the brand does, who it serves, what makes it different…" rows={4} autoFocus={false} />
+            <div className="mt-5">
+              <SectionLabel>Products & services</SectionLabel>
+              <TA value={a.products} onChange={v => set({ products: v })} placeholder={"- Product or service one\n- Another one"} rows={4} autoFocus={false} />
             </div>
           </Q>
         )}
@@ -1613,6 +1682,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
             <div className="space-y-2">
               {[
                 ["Brand", "brand", a.brandName || a.brandWebsite || "—"],
+                ["About", "context", [a.aboutUs, a.products].filter(Boolean).join("\n\n") || "—"],
                 ["Title", "title", a.title],
                 ["Type", "type", typeLabel || "—"],
                 ["Deliverables", "format", deliverablesLabel || "—"],
