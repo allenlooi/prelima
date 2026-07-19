@@ -272,6 +272,20 @@ const SectionLabel = ({ children }) => (
   <div className="mono text-[11px] font-medium uppercase tracking-[0.14em] mb-2" style={{ color: "var(--muted)" }}>{children}</div>
 );
 
+/* Confirmation shown before leaving a half-filled brief (nothing is saved). */
+const ConfirmLeave = ({ onConfirm, onCancel }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-5 fade" style={{ background: "rgba(10,10,15,.45)" }}>
+    <div className="rounded-2xl p-6 max-w-sm w-full rise" style={{ background: "var(--surface)", boxShadow: "var(--shadow-lg)", border: "1px solid var(--line)" }}>
+      <h3 className="display text-lg font-semibold mb-2">Leave this brief?</h3>
+      <p className="text-sm mb-5" style={{ color: "var(--muted)" }}>Your answers aren't saved, so you'll lose them if you leave now.</p>
+      <div className="flex gap-3 justify-end">
+        <Btn variant="secondary" onClick={onCancel}>Keep going</Btn>
+        <button onClick={onConfirm} className="rounded-xl px-5 py-3 text-sm font-medium" style={{ background: "#E02424", color: "#fff" }}>Leave</button>
+      </div>
+    </div>
+  </div>
+);
+
 /* Light/dark toggle with a hover tooltip explaining what it does. */
 const ThemeToggle = ({ dark, setDark }) => (
   <button onClick={() => setDark(!dark)}
@@ -482,7 +496,7 @@ const VoiceTA = ({ value, onChange, placeholder, rows = 5, cleanHint }) => {
   );
 };
 
-function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onDone, onExit, dark, setDark }) {
+function IntakeFlow({ projectName = "New project", freelancer = "My Studio", viaLink, onDone, onExit, dark, setDark }) {
   const [step, setStep] = useState(-1);
   const [a, setA] = useState(blankAnswers);
   const [saved, setSaved] = useState(true);
@@ -754,7 +768,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   if (preview) {
     return (
-      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
+      <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark} onHome={onExit} dirty={step >= 0}>
         <div className="rise max-w-2xl">
           <div className="mb-5">
             <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Your brief</div>
@@ -763,6 +777,12 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
               {result ? "AI-polished — edit anything, or download it." : "It's ready as-is, in your own words. Want tighter writing and a check for gaps? Polish it with AI — or download it as is."}
             </p>
           </div>
+          {viaLink && (
+            <div className="rounded-xl p-4 mb-4 flex items-start gap-2.5" style={{ background: "var(--accent-soft)" }}>
+              <Send className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--accent)" }} />
+              <span className="text-sm" style={{ color: "var(--accent)" }}>You're done — download this as a PDF and send it back to whoever shared this link with you.</span>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <Btn onClick={polishWithAI} disabled={polishing}>
               {polishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
@@ -783,7 +803,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
 
   if (step === -1) {
     return (
-      <IntakeShell pct={0} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
+      <IntakeShell pct={0} saved onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark} onHome={onExit} dirty={step >= 0}>
         <div className="rise max-w-xl">
           <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>NEW PROJECT BRIEF</div>
           <h1 className="display text-3xl md:text-5xl font-semibold leading-tight mb-4">Let's shape this project properly.</h1>
@@ -851,7 +871,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const s = steps[idx].id;
 
   return (
-    <IntakeShell pct={pct} saved={saved} onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark}>
+    <IntakeShell pct={pct} saved={saved} onExit={onExit} projectName={projectName} freelancer={freelancer} dark={dark} setDark={setDark} onHome={onExit} dirty={step >= 0}>
       <div className="max-w-2xl w-full">
         {s === "projectname" && (
           <Q idx={idx} total={total} title="What's the project called?" hint="A short name for this project — it goes at the top of your brief.">
@@ -1161,7 +1181,10 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   );
 }
 
-function IntakeShell({ children, pct, saved, onExit, projectName, freelancer, dark, setDark }) {
+function IntakeShell({ children, pct, saved, onExit, onHome, dirty, projectName, freelancer, dark, setDark }) {
+  const [confirm, setConfirm] = useState(false);
+  const home = onHome || onExit;
+  const leave = () => { if (dirty) setConfirm(true); else home && home(); };
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <div className="h-1 w-full" style={{ background: "var(--line)" }}>
@@ -1169,7 +1192,7 @@ function IntakeShell({ children, pct, saved, onExit, projectName, freelancer, da
       </div>
       <header className="flex items-center justify-between px-5 md:px-10 py-4">
         <div className="flex items-center gap-2">
-          <Wordmark small />
+          <button onClick={leave} aria-label="Back to home" title="Back to home"><Wordmark small /></button>
         </div>
         <div className="flex items-center gap-4">
           <span className="mono text-[11px] flex items-center gap-1.5" style={{ color: saved ? "var(--good)" : "var(--muted)" }}>
@@ -1177,9 +1200,10 @@ function IntakeShell({ children, pct, saved, onExit, projectName, freelancer, da
             {saved ? "Saved" : "Saving"}
           </span>
           {setDark && <ThemeToggle dark={dark} setDark={setDark} />}
-          {onExit && <button onClick={onExit} aria-label="Exit intake"><X className="w-4 h-4" style={{ color: "var(--muted)" }} /></button>}
+          {home && <button onClick={leave} aria-label="Exit to home"><X className="w-4 h-4" style={{ color: "var(--muted)" }} /></button>}
         </div>
       </header>
+      {confirm && <ConfirmLeave onConfirm={() => { setConfirm(false); home && home(); }} onCancel={() => setConfirm(false)} />}
       <main className="flex-1 flex items-center px-5 md:px-10 pb-16 pt-4 md:pt-0">
         <div className="w-full max-w-3xl mx-auto">{children}</div>
       </main>
@@ -1197,7 +1221,7 @@ const Wordmark = ({ small }) => (
 /* Creative / task brief — freelancer briefing their own team          */
 /* ------------------------------------------------------------------ */
 
-function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark }) {
+function TaskBriefFlow({ freelancer = "My Studio", viaLink, onDone, onExit, dark, setDark }) {
   const [step, setStep] = useState(-1);
   const [a, setA] = useState(blankTaskAnswers);
   const [saved, setSaved] = useState(true);
@@ -1488,7 +1512,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
 
   if (preview) {
     return (
-      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
+      <IntakeShell pct={100} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark} onHome={onExit} dirty={step >= 0}>
         <div className="rise max-w-2xl">
           <div className="mb-5">
             <div className="mono text-[11px] uppercase tracking-wider mb-1" style={{ color: "var(--accent)" }}>Your brief</div>
@@ -1497,6 +1521,12 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
               {result ? "AI-polished — edit anything, or download it." : "It's ready as-is, in your own words. Want tighter writing? Polish it with AI — or download it as is."}
             </p>
           </div>
+          {viaLink && (
+            <div className="rounded-xl p-4 mb-4 flex items-start gap-2.5" style={{ background: "var(--accent-soft)" }}>
+              <Send className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--accent)" }} />
+              <span className="text-sm" style={{ color: "var(--accent)" }}>You're done — download this as a PDF and send it back to whoever shared this link with you.</span>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <Btn onClick={polishWithAI} disabled={polishing}>
               {polishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
@@ -1518,7 +1548,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
 
   if (step === -1) {
     return (
-      <IntakeShell pct={0} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
+      <IntakeShell pct={0} saved onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark} onHome={onExit} dirty={step >= 0}>
         <div className="rise max-w-xl">
           <div className="mono text-xs mb-4" style={{ color: "var(--accent)" }}>NEW CREATIVE BRIEF</div>
           <h1 className="display text-3xl md:text-5xl font-semibold leading-tight mb-4">Brief someone on a piece of work.</h1>
@@ -1619,7 +1649,7 @@ function TaskBriefFlow({ freelancer = "My Studio", onDone, onExit, dark, setDark
   const s = steps[idx].id;
 
   return (
-    <IntakeShell pct={pct} saved={saved} onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark}>
+    <IntakeShell pct={pct} saved={saved} onExit={onExit} freelancer={freelancer} dark={dark} setDark={setDark} onHome={onExit} dirty={step >= 0}>
       <div className="max-w-2xl w-full">
         {s === "brand" && (
           <Q idx={idx} total={total} title="Who's this for?" hint="Your brand or company. If you don't have a website yet, just give us the name.">
@@ -3021,6 +3051,18 @@ export default function App() {
     setIntakeReturn(from); if (name) setPreviewProjectName(name); setIntakeIsPreview(isPreview); setView("intake");
   };
   const [dark, setDark] = useState(false);
+  const [viaLink, setViaLink] = useState(false);
+
+  // Shareable entry URLs: /project-brief and /creative-brief open the matching
+  // blank flow directly, and mark the session as "arrived via a shared link".
+  useEffect(() => {
+    const p = window.location.pathname.replace(/\/+$/, "").toLowerCase();
+    if (p === "/project-brief" || p === "/projectbrief") { setViaLink(true); setView("intake"); }
+    else if (p === "/creative-brief" || p === "/creativebrief") { setViaLink(true); setView("taskBrief"); }
+  }, []);
+
+  const goTo = (path, v) => { try { window.history.pushState({}, "", path); } catch {} setViaLink(false); setView(v); };
+  const goHome = () => { try { window.history.pushState({}, "", "/"); } catch {} setView("landing"); };
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -3125,13 +3167,13 @@ export default function App() {
     <div data-app="prelima" data-theme={dark ? "dark" : "light"} className="min-h-screen antialiased" style={{ background: "var(--bg)" }}>
       <ThemeStyles />
       {view === "landing" && <Landing
-        onStart={() => startIntake("landing")}
-        onStartTaskBrief={() => setView("taskBrief")}
+        onStart={() => goTo("/project-brief", "intake")}
+        onStartTaskBrief={() => goTo("/creative-brief", "taskBrief")}
         dark={dark} setDark={setDark} />}
       {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
       {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} taskBriefs={taskBriefs} setTaskBriefs={setTaskBriefs} onNewTaskBrief={() => setView("taskBrief")} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
-      {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} onDone={handleIntakeDone} onExit={() => setView(intakeReturn)} dark={dark} setDark={setDark} />}
-      {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} onDone={handleTaskBriefDone} onExit={() => setView("app")} dark={dark} setDark={setDark} />}
+      {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} viaLink={viaLink} onDone={handleIntakeDone} onExit={goHome} dark={dark} setDark={setDark} />}
+      {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} viaLink={viaLink} onDone={handleTaskBriefDone} onExit={goHome} dark={dark} setDark={setDark} />}
     </div>
   );
 }
