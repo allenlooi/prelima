@@ -444,6 +444,8 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const [showBg, setShowBg] = useState(false);
   const [submitState, setSubmitState] = useState(null); // null | 'working' | 'done' | 'error'
   const [result, setResult] = useState(null);
+  const [timelineWarning, setTimelineWarning] = useState("");
+  const [timelineChecking, setTimelineChecking] = useState(false);
 
   const set = (patch) => { setA(prev => ({ ...prev, ...patch })); setSaved(false); };
   useEffect(() => { if (!saved) { const t = setTimeout(() => setSaved(true), 900); return () => clearTimeout(t); } }, [a, saved]);
@@ -458,6 +460,8 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
     { id: "timeline", label: "Timeline" },
     { id: "budget", label: "Budget" },
     { id: "revisions", label: "Revisions" },
+    { id: "links", label: "Files & links" },
+    { id: "briefer", label: "Your name" },
     { id: "review", label: "Review" },
   ]), []);
 
@@ -473,6 +477,32 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   const fmtBudget = (n) => curSym + Number(n || 0).toLocaleString();
   const budgetOpts = budgetRangeOptions(a.currency);
   const budgetIsCustom = (() => { const o = budgetOpts.find(r => r[0] === a.budgetRange); return o && o[1] === "custom"; })();
+
+  // On the timeline step, if the timeframe looks tight for the scope, ask AI to sanity-check
+  // it and surface a friendly, non-blocking caution.
+  useEffect(() => {
+    if (steps[idx]?.id !== "timeline") { setTimelineChecking(false); return; }
+    const weeks = a.timelineMode === "date"
+      ? (a.timelineDate ? Math.round((new Date(a.timelineDate).getTime() - Date.now()) / (7 * 24 * 3600 * 1000)) : null)
+      : a.timelineWeeks;
+    if (weeks == null || weeks > 2) { setTimelineWarning(""); setTimelineChecking(false); return; }
+    let cancelled = false;
+    setTimelineChecking(true);
+    const t = setTimeout(async () => {
+      try {
+        const text = await callClaude([{
+          role: "user",
+          content: `A client wants this delivered in about ${weeks <= 0 ? "less than a week" : weeks + " week(s)"}.\n\nProject: ${a.overview}\nDeliverables: ${deliverablesLabel || "—"}\nObjectives: ${a.objectives.join(", ") || "—"}\n\nIs that realistic for this scope? If it's too short, reply with ONE short friendly caution (under 25 words) naming the risk. If it's fine, reply exactly "OK".\n\nRespond ONLY with JSON: {"warning": "..."}`
+        }]);
+        const j = parseJSON(text);
+        if (!cancelled) setTimelineWarning(j && j.warning && j.warning.trim().toUpperCase() !== "OK" ? j.warning.trim() : "");
+      } catch {
+        if (!cancelled) setTimelineWarning(weeks <= 1 ? "That's a very tight timeline for this scope — expect rushed delivery and limited revisions." : "");
+      }
+      if (!cancelled) setTimelineChecking(false);
+    }, 700);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [idx, a.timelineWeeks, a.timelineDate, a.timelineMode]);
 
   async function analyseWebsite() {
     if (!a.website) return;
@@ -539,7 +569,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
   if (submitState === "working" || submitState === "done") {
     return (
       <IntakeShell pct={100} saved onExit={onExit} projectName={projectName} freelancer={freelancer}>
-        <div className="rise max-w-xl">
+        <div className="rise max-w-2xl">
           {submitState === "working" ? (<>
             <Loader2 className="w-8 h-8 animate-spin mb-6" style={{ color: "var(--accent)" }} />
             <h2 className="display text-3xl font-semibold mb-3">Turning your answers into a brief…</h2>
@@ -553,17 +583,69 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
               {onExit && <Btn variant="secondary" onClick={onExit}>Close</Btn>}
             </div>
             <p className="mono text-[11px] mt-5" style={{ color: "var(--muted)" }}>Keep a copy — handy if you're briefing other vendors too.</p>
-            <div className="pr-print-area pr-print-only">
-              <h1 className="display text-2xl font-semibold mb-4">Project brief — {projectName}</h1>
-              <p style={{ whiteSpace: "pre-wrap" }}>{result && result.professionalBrief ? result.professionalBrief : ""}</p>
-              <h2 className="display text-lg font-semibold mt-6 mb-2">Key details</h2>
-              <p>Objectives: {a.objectives.join(", ") || "—"}</p>
-              <p>Audience: {audienceSummary || "—"}</p>
-              <p>Deliverables: {deliverablesLabel || "—"}</p>
-              <p>Platforms: {a.platforms.join(", ") || "—"}</p>
-              <p>Timeline: {a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</p>
-              <p>Budget: {fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</p>
-              <p>Revisions: {a.revisions}</p>
+            <div className="pr-print-area rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }}>
+              <div style={{ background: "var(--accent-soft)", padding: "28px 32px", borderBottom: "3px solid var(--accent)" }}>
+                <div className="mono text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: "var(--accent)" }}>Project Brief</div>
+                <h1 className="display text-2xl md:text-3xl font-semibold leading-tight" style={{ color: "var(--ink)" }}>{projectName}</h1>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {a.objectives.length > 0 && <Tag tone="accent">{a.objectives[0]}{a.objectives.length > 1 ? ` +${a.objectives.length - 1}` : ""}</Tag>}
+                  {a.budgetRange && <Tag>{fmtBudget(a.budget)}</Tag>}
+                  <Tag>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</Tag>
+                </div>
+              </div>
+
+              <div style={{ padding: "28px 32px" }}>
+                <BriefSection title="The brief">
+                  <p className="text-sm leading-relaxed whitespace-pre-line">{result && result.professionalBrief ? result.professionalBrief : ""}</p>
+                </BriefSection>
+
+                {a.products && a.products.trim() && (
+                  <BriefSection title="Products & services">
+                    <div className="text-sm leading-relaxed whitespace-pre-line">{a.products}</div>
+                  </BriefSection>
+                )}
+
+                <BriefSection title="Key details">
+                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Objectives: </span>{a.objectives.join(", ") || "—"}</div>
+                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Audience: </span>{audienceSummary || "—"}</div>
+                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Deliverables: </span>{deliverablesLabel || "—"}</div>
+                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Platforms: </span>{a.platforms.join(", ") || "—"}</div>
+                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Timeline: </span>{a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`}</div>
+                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Budget: </span>{fmtBudget(a.budget)}{a.budgetFlexible ? " (flexible)" : " (fixed)"}</div>
+                  <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Revisions: </span>{a.revisions}</div>
+                </BriefSection>
+
+                {result && [...(result.missingInfo || []), ...(result.unclearRequirements || []), ...(result.scopeGaps || [])].length > 0 && (
+                  <BriefSection title="Worth clarifying">
+                    <ul className="space-y-1.5">
+                      {[...(result.missingInfo || []), ...(result.unclearRequirements || []), ...(result.scopeGaps || [])].map((d, i) => (
+                        <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--warn)" }}>•</span><span>{d}</span></li>
+                      ))}
+                    </ul>
+                  </BriefSection>
+                )}
+
+                {result && result.followUpQuestions && result.followUpQuestions.length > 0 && (
+                  <BriefSection title="Questions before quoting">
+                    <ul className="space-y-1.5">
+                      {result.followUpQuestions.map((d, i) => <li key={i} className="text-sm flex gap-2.5"><span style={{ color: "var(--accent)" }}>•</span><span>{d}</span></li>)}
+                    </ul>
+                  </BriefSection>
+                )}
+
+                {(a.workingFiles || a.briefingDeck || a.brandGuidelines) && (
+                  <BriefSection title="Files & links">
+                    {a.workingFiles && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Working files: </span>{a.workingFiles}</div>}
+                    {a.briefingDeck && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Briefing deck: </span>{a.briefingDeck}</div>}
+                    {a.brandGuidelines && <div className="text-sm mb-1.5"><span style={{ color: "var(--muted)" }}>Brand guidelines: </span>{a.brandGuidelines}</div>}
+                  </BriefSection>
+                )}
+
+                <div className="mt-8 pt-5 flex items-center justify-between" style={{ borderTop: "1px solid var(--line)" }}>
+                  <div className="text-sm"><span style={{ color: "var(--muted)" }}>Briefed by </span><span className="font-medium">{a.briefer || "—"}</span></div>
+                  <div className="mono text-[11px]" style={{ color: "var(--muted)" }}>Prelima · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
+                </div>
+              </div>
             </div>
           </>)}
         </div>
@@ -722,6 +804,18 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
               <Slider value={a.timelineWeeks} min={1} max={24} onChange={v => set({ timelineWeeks: v })}
                 format={v => v === 24 ? "24+ weeks" : `${v} week${v > 1 ? "s" : ""}`} />
             )}
+            {timelineChecking && (
+              <p className="mt-5 text-sm flex items-center gap-2" style={{ color: "var(--muted)" }}>
+                <Loader2 className="w-4 h-4 animate-spin" /> Checking if that's enough time…
+              </p>
+            )}
+            {!timelineChecking && timelineWarning && (
+              <div className="mt-5 rounded-xl p-4 flex items-start gap-3 fade"
+                style={{ background: "color-mix(in srgb, var(--warn) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 30%, transparent)" }}>
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--warn)" }} />
+                <span className="text-sm" style={{ color: "var(--ink)" }}>{timelineWarning}</span>
+              </div>
+            )}
           </Q>
         )}
 
@@ -767,6 +861,31 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
           </Q>
         )}
 
+        {s === "links" && (
+          <Q idx={idx} total={total} title="Any files or links to share?" hint="Optional — anything that helps whoever picks this up.">
+            <SectionLabel>Working files</SectionLabel>
+            <input type="url" value={a.workingFiles} onChange={e => set({ workingFiles: e.target.value })}
+              placeholder="Link to source files, assets…" className="w-full rounded-xl px-4 py-3 text-sm" autoFocus />
+            <div className="mt-4">
+              <SectionLabel>Briefing deck</SectionLabel>
+              <input type="url" value={a.briefingDeck} onChange={e => set({ briefingDeck: e.target.value })}
+                placeholder="Link to a deck or strategy doc…" className="w-full rounded-xl px-4 py-3 text-sm" />
+            </div>
+            <div className="mt-4">
+              <SectionLabel>Brand guidelines</SectionLabel>
+              <input type="url" value={a.brandGuidelines} onChange={e => set({ brandGuidelines: e.target.value })}
+                placeholder="Link to brand guidelines / brand kit…" className="w-full rounded-xl px-4 py-3 text-sm" />
+            </div>
+          </Q>
+        )}
+
+        {s === "briefer" && (
+          <Q idx={idx} total={total} title="Last thing — who's briefing this?" hint="Your name goes on the brief, so whoever picks up the work knows who to ask.">
+            <input type="text" value={a.briefer} onChange={e => set({ briefer: e.target.value })}
+              placeholder="Your name" className="w-full rounded-2xl px-5 py-4 text-base" style={{ boxShadow: "var(--shadow)" }} autoFocus />
+          </Q>
+        )}
+
         {s === "review" && (
           <Q idx={idx} total={total} title="Quick check before we send." hint="Tap any answer to change it.">
             <div className="space-y-2">
@@ -779,6 +898,7 @@ function IntakeFlow({ projectName = "New project", freelancer = "My Studio", onD
                 ["Deliverables", deliverablesLabel, 4],
                 ["Timeline", a.timelineMode === "date" ? (a.timelineDate || "—") : `${a.timelineWeeks} weeks`, 6],
                 ["Budget", `${fmtBudget(a.budget)}${a.budgetFlexible ? " · flexible" : " · fixed"}`, 7],
+                ["Briefed by", a.briefer || "—", 10],
               ].map(([k, v, go]) => (
                 <button key={k} onClick={() => setStep(go)} className="w-full text-left rounded-xl px-4 py-3 flex items-start gap-4 transition-colors"
                   style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
