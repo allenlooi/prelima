@@ -10,7 +10,7 @@ import {
 import { supabase, supabaseConfigured } from "./supabaseClient.js";
 import { fetchProjects, syncProjects, fetchQuotes, syncQuotes, fetchTaskBriefs, syncTaskBriefs, ensureProfile, saveWorkspaceName } from "./db.js";
 import { pageview, trackEvent } from "./analytics.js";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType } from "docx";
 
 /* ------------------------------------------------------------------ */
 /* Theme                                                               */
@@ -161,6 +161,55 @@ function looksReal(s, min = 3) {
     if (/^(.)\1+$/.test(letters.toLowerCase())) return false;
   }
   return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Handover doc — table-based, no AI, purely structured data entry     */
+/* ------------------------------------------------------------------ */
+
+const HANDOVER_STATUSES = ["Not started", "Briefed/In-Progress", "Internal Review", "First draft ready", "Client Review", "Revision", "Approved", "Completed"];
+const HANDOVER_COLUMNS = ["Brand", "Project", "Task", "Status", "Next step", "Deadline", "Covering PIC", "Client PIC", "Links", "Email thread", "Remarks"];
+
+const blankHandoverRow = () => ({
+  brand: "", project: "", task: "", status: "", nextStep: "", deadline: "",
+  coveringPIC: "", clientPIC: "", links: [{ label: "", url: "" }],
+  emailThread: "", remarks: "",
+});
+
+const linksToText = (links) => (links || []).filter(l => l.label || l.url).map(l => `${l.label || "Link"}: ${l.url || "—"}`).join(", ") || "—";
+
+async function downloadHandoverDocx(name, email, rows) {
+  const filled = rows.filter(r => r.brand || r.project || r.task || r.status);
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children: HANDOVER_COLUMNS.map(h => new TableCell({
+      shading: { fill: "EEF0FF" },
+      children: [new Paragraph({ children: [new TextRun({ text: h, bold: true })] })],
+    })),
+  });
+  const dataRows = filled.map(r => new TableRow({
+    children: [
+      r.brand, r.project, r.task, r.status, r.nextStep, r.deadline,
+      r.coveringPIC, r.clientPIC, linksToText(r.links), r.emailThread, r.remarks,
+    ].map(val => new TableCell({ children: [new Paragraph({ text: val || "—" })] })),
+  }));
+
+  const doc = new Document({
+    sections: [{
+      children: [
+        new Paragraph({ text: "Handover Doc", heading: HeadingLevel.TITLE, spacing: { after: 100 } }),
+        new Paragraph({ spacing: { after: 200 }, children: [new TextRun({ text: `${name || "—"} · ${email || "—"}` })] }),
+        new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [headerRow, ...dataRows] }),
+      ],
+    }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const el = document.createElement("a");
+  el.href = url; el.download = `${(name || "handover").replace(/[^\w-]+/g, "-")}-handover.docx`;
+  document.body.appendChild(el); el.click();
+  document.body.removeChild(el); URL.revokeObjectURL(url);
 }
 
 async function downloadTaskBriefDocx(a, result, typeLabel) {
@@ -1970,10 +2019,157 @@ function TaskBriefFlow({ freelancer = "My Studio", viaLink, onDone, onExit, dark
 }
 
 /* ------------------------------------------------------------------ */
+/* Handover doc flow — a table, not a wizard. Purely structured data   */
+/* entry, no AI: what's handed off is too subjective for AI to guess.  */
+/* ------------------------------------------------------------------ */
+
+function HandoverFlow({ onExit, dark, setDark }) {
+  const [hName, setHName] = useState("");
+  const [hEmail, setHEmail] = useState("");
+  const [hRows, setHRows] = useState([blankHandoverRow()]);
+  const doneRef = useRef(false);
+
+  const setRow = (i, patch) => setHRows(rows => rows.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addRow = () => setHRows(rows => [...rows, blankHandoverRow()]);
+  const removeRow = (i) => setHRows(rows => rows.length > 1 ? rows.filter((_, idx) => idx !== i) : rows);
+  const setLink = (ri, li, patch) => setHRows(rows => rows.map((r, idx) => idx === ri ? { ...r, links: r.links.map((l, lidx) => lidx === li ? { ...l, ...patch } : l) } : r));
+  const addLink = (ri) => setHRows(rows => rows.map((r, idx) => idx === ri ? { ...r, links: [...r.links, { label: "", url: "" }] } : r));
+  const removeLink = (ri, li) => setHRows(rows => rows.map((r, idx) => idx === ri ? { ...r, links: r.links.length > 1 ? r.links.filter((_, lidx) => lidx !== li) : r.links } : r));
+
+  const dirty = !!(hName || hEmail || hRows.some(r => r.brand || r.project || r.task || r.status || r.nextStep || r.deadline || r.coveringPIC || r.clientPIC || r.emailThread || r.remarks || r.links.some(l => l.label || l.url)));
+  const canDownload = looksReal(hName) && hEmail.trim().includes("@");
+  const filledRows = hRows.filter(r => r.brand || r.project || r.task || r.status);
+
+  const markDone = () => {
+    if (!doneRef.current) { doneRef.current = true; trackEvent("brief_completed", { brief_type: "handover" }); }
+  };
+
+  const inputCls = "w-full rounded-lg px-2.5 py-2 text-sm";
+
+  return (
+    <IntakeShell pct={100} saved onExit={onExit} dirty={dirty} dark={dark} setDark={setDark}>
+      <div className="rise w-full" style={{ maxWidth: "min(1100px, 100%)" }}>
+        <div className="mb-6">
+          <div className="mono text-xs mb-2" style={{ color: "var(--accent)" }}>HANDOVER DOC</div>
+          <h1 className="display text-3xl md:text-4xl font-semibold mb-2">Going out of office?</h1>
+          <p className="text-sm md:text-base" style={{ color: "var(--muted)" }}>
+            List what you're handing off so nothing drops while you're away. Fill in what's relevant — this is yours to shape, no AI involved.
+          </p>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 mb-6 max-w-xl">
+          <div>
+            <SectionLabel>Your name</SectionLabel>
+            <input type="text" value={hName} onChange={e => setHName(e.target.value)} placeholder="Your name" className={inputCls} autoFocus />
+          </div>
+          <div>
+            <SectionLabel>Your email</SectionLabel>
+            <input type="email" value={hEmail} onChange={e => setHEmail(e.target.value)} placeholder="you@example.com" className={inputCls} />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl mb-3" style={{ border: "1px solid var(--line)" }}>
+          <table className="text-sm" style={{ borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--line)" }}>
+                {HANDOVER_COLUMNS.map(h => (
+                  <th key={h} className="mono text-[10px] uppercase tracking-wide text-left px-2.5 py-2.5 whitespace-nowrap" style={{ color: "var(--muted)" }}>{h}</th>
+                ))}
+                <th className="px-2.5 py-2.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {hRows.map((r, ri) => (
+                <tr key={ri} style={{ borderBottom: "1px solid var(--line)" }}>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.brand} onChange={e => setRow(ri, { brand: e.target.value })} className={inputCls} style={{ minWidth: 96 }} /></td>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.project} onChange={e => setRow(ri, { project: e.target.value })} className={inputCls} style={{ minWidth: 96 }} /></td>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.task} onChange={e => setRow(ri, { task: e.target.value })} className={inputCls} style={{ minWidth: 110 }} /></td>
+                  <td className="px-1.5 py-1.5">
+                    <select value={r.status} onChange={e => setRow(ri, { status: e.target.value })} className={inputCls} style={{ minWidth: 140 }}>
+                      <option value="">Select…</option>
+                      {HANDOVER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.nextStep} onChange={e => setRow(ri, { nextStep: e.target.value })} className={inputCls} style={{ minWidth: 130 }} /></td>
+                  <td className="px-1.5 py-1.5"><input type="date" value={r.deadline} onChange={e => setRow(ri, { deadline: e.target.value })} className={inputCls} style={{ minWidth: 140 }} /></td>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.coveringPIC} onChange={e => setRow(ri, { coveringPIC: e.target.value })} className={inputCls} style={{ minWidth: 100 }} /></td>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.clientPIC} onChange={e => setRow(ri, { clientPIC: e.target.value })} className={inputCls} style={{ minWidth: 100 }} /></td>
+                  <td className="px-1.5 py-1.5">
+                    <div className="space-y-1.5" style={{ minWidth: 190 }}>
+                      {r.links.map((l, li) => (
+                        <div key={li} className="flex items-center gap-1">
+                          <input type="text" value={l.label} onChange={e => setLink(ri, li, { label: e.target.value })} placeholder="Label" className="rounded-lg px-2 py-1.5 text-xs" style={{ width: 76 }} />
+                          <input type="url" value={l.url} onChange={e => setLink(ri, li, { url: e.target.value })} placeholder="URL" className="rounded-lg px-2 py-1.5 text-xs flex-1" style={{ minWidth: 90 }} />
+                          {r.links.length > 1 && <button onClick={() => removeLink(ri, li)} aria-label="Remove link"><X className="w-3 h-3 shrink-0" style={{ color: "var(--muted)" }} /></button>}
+                        </div>
+                      ))}
+                      <button onClick={() => addLink(ri)} className="text-xs font-medium inline-flex items-center gap-1" style={{ color: "var(--accent)" }}>
+                        <Plus className="w-3 h-3" /> Add link
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.emailThread} onChange={e => setRow(ri, { emailThread: e.target.value })} className={inputCls} style={{ minWidth: 120 }} /></td>
+                  <td className="px-1.5 py-1.5"><input type="text" value={r.remarks} onChange={e => setRow(ri, { remarks: e.target.value })} className={inputCls} style={{ minWidth: 130 }} /></td>
+                  <td className="px-1.5 py-1.5">
+                    {hRows.length > 1 && <button onClick={() => removeRow(ri)} aria-label="Remove row"><Trash2 className="w-4 h-4" style={{ color: "var(--muted)" }} /></button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <button onClick={addRow} className="mb-8 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: "var(--accent)" }}>
+          <Plus className="w-4 h-4" /> Add row
+        </button>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Btn onClick={() => { markDone(); downloadBrief(); }} disabled={!canDownload}><Download className="w-4 h-4" /> Download PDF</Btn>
+          <Btn variant="secondary" onClick={() => { markDone(); downloadHandoverDocx(hName, hEmail, hRows); }} disabled={!canDownload}><FileText className="w-4 h-4" /> Download Word doc</Btn>
+        </div>
+        {!canDownload && <p className="text-xs mt-2" style={{ color: "var(--muted)" }}>Add your name and email to download.</p>}
+
+        <div className="pr-print-area pr-print-only">
+          <h1 className="display text-2xl font-semibold mb-1">Handover Doc</h1>
+          <p style={{ marginBottom: 4 }}>{hName || "—"} · {hEmail || "—"}</p>
+          <p style={{ marginBottom: 16, color: "#5A5A64" }}>Prelima · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</p>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9 }}>
+            <thead>
+              <tr>
+                {HANDOVER_COLUMNS.map(h => (
+                  <th key={h} style={{ textAlign: "left", padding: "4px 6px", borderBottom: "1px solid #ccc", fontWeight: 600 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filledRows.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.brand || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.project || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.task || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.status || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.nextStep || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.deadline || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.coveringPIC || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.clientPIC || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{linksToText(r.links)}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.emailThread || "—"}</td>
+                  <td style={{ padding: "4px 6px", borderBottom: "1px solid #eee", verticalAlign: "top" }}>{r.remarks || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </IntakeShell>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Landing page                                                        */
 /* ------------------------------------------------------------------ */
 
-function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
+function Landing({ onStart, onStartTaskBrief, onStartHandover, dark, setDark }) {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <header className="flex items-center justify-between px-5 md:px-12 py-5 max-w-5xl mx-auto w-full">
@@ -2014,6 +2210,20 @@ function Landing({ onStart, onStartTaskBrief, dark, setDark }) {
             </div>
           </button>
         </div>
+
+        <div className="rise w-full max-w-2xl mt-10" style={{ animationDelay: ".12s" }}>
+          <div className="mono text-[11px] uppercase tracking-[0.14em] mb-3 text-left" style={{ color: "var(--muted)" }}>More tools</div>
+          <button onClick={onStartHandover} className="w-full flex items-center gap-3 text-left rounded-xl p-4 transition-colors hover:opacity-90"
+            style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+            <Send className="w-4 h-4 shrink-0" style={{ color: "var(--accent)" }} />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium">Handover doc</div>
+              <div className="text-xs" style={{ color: "var(--muted)" }}>Generate your handover doc if you're going out of office.</div>
+            </div>
+            <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+          </button>
+        </div>
+
         <p className="rise mt-8 text-xs flex items-center gap-1.5" style={{ color: "var(--muted)", animationDelay: ".15s" }}>
           <Lock className="w-3 h-3" /> No login required — nothing is stored on our end. You download your brief, we don't keep a copy.
         </p>
@@ -3062,6 +3272,7 @@ export default function App() {
     const p = window.location.pathname.replace(/\/+$/, "").toLowerCase();
     if (p === "/project-brief" || p === "/projectbrief") { setViaLink(true); setView("intake"); }
     else if (p === "/creative-brief" || p === "/creativebrief") { setViaLink(true); setView("taskBrief"); }
+    else if (p === "/handover-doc" || p === "/handoverdoc") { setView("handover"); }
   }, []);
 
   const goTo = (path, v) => { try { window.history.pushState({}, "", path); } catch {} setViaLink(false); setView(v); };
@@ -3176,11 +3387,13 @@ export default function App() {
       {view === "landing" && <Landing
         onStart={() => goTo("/project-brief", "intake")}
         onStartTaskBrief={() => goTo("/creative-brief", "taskBrief")}
+        onStartHandover={() => goTo("/handover-doc", "handover")}
         dark={dark} setDark={setDark} />}
       {view === "auth" && <AuthScreen onDone={() => setView("app")} onBack={() => setView("landing")} dark={dark} setDark={setDark} />}
       {view === "app" && session && <AppShell projects={projects} setProjects={setProjects} quotes={quotes} setQuotes={setQuotes} taskBriefs={taskBriefs} setTaskBriefs={setTaskBriefs} onNewTaskBrief={() => setView("taskBrief")} wsName={wsName} setWsName={setWsNamePersisted} onLogout={() => { supabase.auth.signOut(); setView("landing"); }} onPreviewIntake={(name) => startIntake("app", name, true)} dark={dark} setDark={setDark} />}
       {view === "intake" && <IntakeFlow projectName={previewProjectName} freelancer={wsName} viaLink={viaLink} onDone={handleIntakeDone} onExit={goHome} dark={dark} setDark={setDark} />}
       {view === "taskBrief" && <TaskBriefFlow freelancer={wsName} viaLink={viaLink} onDone={handleTaskBriefDone} onExit={goHome} dark={dark} setDark={setDark} />}
+      {view === "handover" && <HandoverFlow onExit={goHome} dark={dark} setDark={setDark} />}
     </div>
   );
 }
